@@ -18,37 +18,32 @@ knitr::opts_chunk$set(
 ## Overview
 
 This vignette walks through a complete SWAT+ simulation workflow using the
-`swatplusEditoR` package — from reading raw GIS shapefiles and rasters through
-to running the SWAT+ executable and importing the output results.
+`swatplusEditoR` package.  It covers both ways to start a project — delineating
+a new watershed from a DEM, or loading one that was already delineated in
+QSWAT+ or ArcSWAT+.
 
-The workflow mirrors the steps performed by the SWAT+ Editor Python API
-(`src/api/`). Each section maps to one or more of the R functions provided
-by the package.
+The workflow mirrors the steps in the SWAT+ Editor GUI and its Python API
+(`src/api/`).
 
 ```
-GIS files (shapefiles, DEM)
-        │
-        ▼
- read_swatplus_gis()          ← reads sf / terra objects
-        │
-        ▼
- create_project_db()          ← creates SQLite project database
- write_gis_to_db()            ← writes GIS tables to the database
- setup_project()              ← copies reference data, runs GIS import
-        │
-        ▼
- import_wgn()                 ← imports weather generator (WGN) data
- import_weather()             ← registers observed weather files
- match_weather_stations()     ← links stations to spatial objects
-        │
-        ▼
- write_swatplus_files()       ← writes all SWAT+ plain-text input files
-        │
-        ▼
- (run SWAT+ executable)
-        │
-        ▼
- read_output()                ← imports simulation CSV output to SQLite
+   Path A: Delineate watershed        Path B: Use existing watershed
+   (delineate_watershed)              (use_existing_watershed)
+   DEM + outlet point(s)              QSWAT+ / ArcSWAT+ shapefiles
+              |                                     |
+              +-------------- gis_* tables ---------+
+                                    |
+                         create_project_db()        SQLite project database
+                         setup_project()            reference data + GIS import
+                                    |
+                         import_wgn()               Weather Generator data
+                         import_weather()           observed weather files
+                         match_weather_stations()   spatial station linkage
+                                    |
+                         write_swatplus_files()     all SWAT+ input text files
+                                    |
+                         (run SWAT+ executable)
+                                    |
+                         read_output()              simulation output -> SQLite
 ```
 
 ## Prerequisites
@@ -67,6 +62,137 @@ install.packages(
 ```{r load}
 library(swatplusEditoR)
 ```
+
+---
+
+## Choosing a watershed definition method
+
+The package provides two approaches, mirroring the SWAT+ Editor GUI:
+
+| Option | Function | When to use |
+|---|---|---|
+| **Delineate watershed** | `delineate_watershed()` | You have a DEM and want the package to delineate the watershed automatically using TauDEM |
+| **Use existing watershed** | `use_existing_watershed()` | You already have QSWAT+ or ArcSWAT+ output shapefiles |
+
+Both functions produce the same result: the `gis_*` database tables are
+populated and `project_config.delineation_done` is set to `TRUE`, so the rest
+of the workflow is identical regardless of which path you take.
+
+---
+
+## Option A — Delineate watershed with TauDEM
+
+`delineate_watershed()` uses the [TauDEM](https://hydrology.usu.edu/taudem/taudem5/) hydrological analysis library (the same engine used by QSWAT+ internally) via the [`traudem`](https://github.com/lucarraro/traudem) R package.
+
+### Install TauDEM and traudem
+
+```r
+# Install the R wrapper package
+install.packages("traudem")
+
+# Follow the TauDEM installation guide for your OS:
+vignette("taudem-installation", package = "traudem")
+
+# Verify everything is working
+traudem::taudem_sitrep()
+```
+
+### Delineate from a DEM and outlet point
+
+```{r delineate}
+library(swatplusEditoR)
+library(sf)
+
+# Path to a projected GeoTIFF DEM
+# (Geographic/lat-lon DEMs are automatically reprojected to UTM)
+dem_file <- "/path/to/dem.tif"
+
+# Outlet point – can be an sf object, data.frame(lon, lat), or shapefile path
+outlet <- data.frame(lon = 174.76, lat = -36.85)   # WGS84 lon/lat
+
+# Create the project database first
+create_project_db("/path/to/project.sqlite")
+
+# Delineate and write directly to the project database
+gis_data <- delineate_watershed(
+  dem              = dem_file,
+  outlet           = outlet,
+  project_db       = "/path/to/project.sqlite",  # optional: write to DB
+  stream_threshold = 1000,   # upstream cells needed to form a stream
+  snap_distance    = 50,     # max cells to move outlet to nearest stream
+  n_processes      = 1L,     # increase if MPI is available
+  verbose          = TRUE
+)
+```
+
+The function runs this TauDEM pipeline internally:
+
+1. **Pit Remove** — fill sinks in the DEM  
+2. **D8 Flow Directions** — steepest-descent flow routing  
+3. **D8 Contributing Area** (full DEM) — for stream threshold  
+4. **Stream Definition by Threshold** — extract stream network  
+5. **Move Outlets to Streams** — snap outlet to nearest stream cell  
+6. **D8 Contributing Area** (from outlet) — mask to watershed  
+7. **Stream Net** — delineate watershed polygons and labelled stream reaches
+
+The returned `gis_data` list contains data.frames for all `gis_*` tables.
+Simple HRUs (one per landscape unit, placeholder land-use `"AGRL"` and soil
+`"DEFAULT"`) are created automatically.  Refine these later by importing
+land-use and soil rasters via the SWAT+ Editor.
+
+### Inspect intermediate TauDEM files
+
+```{r delineate-inspect}
+# Keep all TauDEM intermediate rasters and shapefiles for inspection
+gis_data <- delineate_watershed(
+  dem           = dem_file,
+  outlet        = outlet,
+  work_dir      = "/path/to/taudem_workspace",
+  keep_work_dir = TRUE,      # don't delete intermediates
+  verbose       = TRUE
+)
+# workspace now contains: DEM.tif, DEMfel.tif, p.tif, sd8.tif,
+#   ad8.tif, src.tif, outlet.shp, movedoutlet.shp,
+#   ord.tif, tree.dat, coord.dat, net.shp, watershed.shp
+```
+
+---
+
+## Option B — Use existing watershed (QSWAT+ / ArcSWAT+ output)
+
+If you have already run QSWAT+ or ArcSWAT+ and have their output shapefiles,
+use `use_existing_watershed()` to read and register them.
+
+```{r use-existing}
+# Directory produced by QSWAT+ (contains subs1.shp, rivs1.shp, etc.)
+gis_dir <- "/path/to/qswatplus_output"
+
+# Read shapefiles and write to the project database
+gis_data <- use_existing_watershed(
+  gis_dir     = gis_dir,
+  project_db  = "/path/to/project.sqlite",   # optional: write to DB
+  dem_file    = "/path/to/dem.tif",           # optional: for elevation stats
+  gis_type    = "qgis",                       # "qgis" or "arcgis"
+  gis_version = "3.40.3-Bratislava",          # recorded in project_config
+  verbose     = TRUE
+)
+```
+
+Standard QSWAT+ shapefile names recognised automatically:
+
+| File | Contents |
+|---|---|
+| `subs1.shp` | Subbasins |
+| `rivs1.shp` | Channels / rivers |
+| `lsus2.shp` | Landscape units |
+| `hrus1.shp` | HRUs |
+| `reservoirs.shp` | Water bodies (optional) |
+| `outlets.shp` | Point sources / inlets (optional) |
+| `aquifers.shp` | Shallow aquifers (optional) |
+| `deepaquifers.shp` | Deep aquifers (optional) |
+| `dem.tif` | DEM raster for elevation stats (optional) |
+
+---
 
 ## 1  Define file paths
 
@@ -92,8 +218,8 @@ wgn_db       <- "/path/to/swatplus_wgn.sqlite"
 # Directory holding observed weather files (*.pcp, *.tmp, *.slr, *.hmd, *.wnd)
 weather_dir  <- "/path/to/observed_weather"
 
-# SWAT+ executable
-swat_exe     <- "/path/to/rev61.3.5_64rel.exe"
+# SWAT+ executable (replace with the actual version you have installed)
+swat_exe     <- "/path/to/swatplus_exe"
 ```
 
 ---
@@ -480,10 +606,14 @@ swat_close_db(con)
 
 ## See also
 
+- `?delineate_watershed` — delineate a watershed from a DEM using TauDEM
+- `?use_existing_watershed` — load QSWAT+/ArcSWAT+ shapefiles into a project
 - `?run_all` — complete workflow in one function
 - `?setup_project` — project initialisation and GIS import
 - `?read_swatplus_gis` — read an entire QSWAT+ output directory
 - `?write_swatplus_files` — write all SWAT+ input text files
 - `?read_output` — import simulation output to SQLite
+- [TauDEM documentation](https://hydrology.usu.edu/taudem/taudem5/)
+- [traudem package](https://github.com/lucarraro/traudem)
 - [SWAT+ documentation](https://swatplus.gitbook.io/docs)
 - [SWAT+ Editor GitHub](https://github.com/limnotrack/swatplus-editor)
