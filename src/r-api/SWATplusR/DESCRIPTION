@@ -1,4 +1,4 @@
-Package: SWATplusR
+Package: swatplusEditoR
 Type: Package
 Title: R Interface for SWAT+ Hydrological Model
 Version: 1.0.0
@@ -34,5 +34,5 @@ Imports:
 Suggests:
     testthat (>= 3.0.0),
     withr (>= 2.5.0)
-RoxygenNote: 7.3.1
+RoxygenNote: 7.3.3
 Config/testthat/edition: 3
