@@ -1,13 +1,20 @@
 ## Tests for delineate.R
 ## ─────────────────────────────────────────────────────────────────────────────
-## Most tests are data-structure checks that do NOT require TauDEM.
-## Tests that call delineate_watershed() are skipped unless TauDEM is present.
+## Tests are organised in three tiers:
+##   1. Structural tests using synthetic mock data — always run, no dependencies
+##   2. Real-file tests using the bundled extdata — require sf + terra, no TauDEM
+##   3. TauDEM integration tests — skipped unless TauDEM is installed
 
 library(swatplusEditoR)
 
 # ===========================================================================
-# Helpers shared across tests
+# Shared helpers
 # ===========================================================================
+
+# Resolve a path inside the package's inst/extdata directory.
+extdata <- function(file) {
+  system.file("extdata", file, package = "swatplusEditoR")
+}
 
 # Minimal synthetic gis_* tables (mirrors what delineate_watershed returns)
 .make_mock_gis <- function(n = 3L) {
@@ -60,7 +67,7 @@ library(swatplusEditoR)
 }
 
 # ===========================================================================
-# Structural tests (no TauDEM required)
+# 1. Structural tests — synthetic data, no file I/O
 # ===========================================================================
 
 test_that(".prepare_outlet rejects non-point geometry", {
@@ -133,8 +140,8 @@ test_that(".build_gis_hrus_simple creates one HRU per LSU", {
 test_that(".build_gis_routing produces correct row count and categories", {
   mock <- .make_mock_gis(3L)
   # Add internal routing columns used by .build_gis_routing
-  mock$channels$.linkno  <- c(1L, 2L, 3L)
-  mock$channels$.dslinkno <- c(2L, 3L, -1L)   # 3 → outlet
+  mock$channels$.linkno   <- c(1L, 2L, 3L)
+  mock$channels$.dslinkno <- c(2L, 3L, -1L)   # channel 3 routes to outlet
   rout <- .build_gis_routing(mock$lsus, mock$channels)
   # Expect n LSU rows + n CH rows
   expect_equal(nrow(rout), nrow(mock$lsus) + nrow(mock$channels))
@@ -147,7 +154,7 @@ test_that(".build_gis_routing produces correct row count and categories", {
 
 test_that(".build_gis_routing handles all channels routing to outlet", {
   mock <- .make_mock_gis(2L)
-  mock$channels$.linkno  <- c(1L, 2L)
+  mock$channels$.linkno   <- c(1L, 2L)
   mock$channels$.dslinkno <- c(-1L, -1L)   # both go to outlet
   rout <- .build_gis_routing(mock$lsus, mock$channels)
   ch_rows <- rout[rout$sourcecat == "CH", ]
@@ -155,8 +162,116 @@ test_that(".build_gis_routing handles all channels routing to outlet", {
 })
 
 # ===========================================================================
-# use_existing_watershed() – structural tests (no TauDEM / no real shapefiles)
+# 2. Real-file tests — use bundled extdata, no TauDEM required
 # ===========================================================================
+
+test_that("extdata files are present and readable", {
+  skip_if_not_installed("sf")
+  skip_if_not_installed("terra")
+
+  dem_path     <- extdata("dem_example.tif")
+  outlet_path  <- extdata("outlet.shp")
+  channels_path <- extdata("channels.shp")
+  subs_path    <- extdata("subbasins.shp")
+
+  expect_true(file.exists(dem_path))
+  expect_true(file.exists(outlet_path))
+  expect_true(file.exists(channels_path))
+  expect_true(file.exists(subs_path))
+
+  # DEM
+  dem <- terra::rast(dem_path)
+  expect_s4_class(dem, "SpatRaster")
+  expect_gt(terra::ncell(dem), 0L)
+
+  # Outlet point
+  outlet <- sf::st_read(outlet_path, quiet = TRUE)
+  expect_s3_class(outlet, "sf")
+  expect_true(all(sf::st_geometry_type(outlet) %in% c("POINT", "MULTIPOINT")))
+  expect_equal(nrow(outlet), 1L)
+
+  # Channels
+  channels <- sf::st_read(channels_path, quiet = TRUE)
+  expect_s3_class(channels, "sf")
+  expect_gt(nrow(channels), 0L)
+
+  # Subbasins
+  subs <- sf::st_read(subs_path, quiet = TRUE)
+  expect_s3_class(subs, "sf")
+  expect_gt(nrow(subs), 0L)
+})
+
+test_that(".build_gis_subbasins parses the bundled subbasins.shp correctly", {
+  skip_if_not_installed("sf")
+  skip_if_not_installed("terra")
+
+  subs_path <- extdata("subbasins.shp")
+  dem_rast  <- terra::rast(extdata("dem_example.tif"))
+
+  sub_df <- .build_gis_subbasins(subs_path, dem_rast)
+
+  expect_s3_class(sub_df, "data.frame")
+  # All required SWAT+ gis_subbasins columns
+  expect_true(all(c("id", "area", "slo1", "len1", "sll",
+                    "lat", "lon", "elev", "elevmin", "elevmax",
+                    ".wsno") %in% names(sub_df)))
+  # Row count matches the source shapefile
+  expect_equal(nrow(sub_df), nrow(sf::st_read(subs_path, quiet = TRUE)))
+  expect_true(all(sub_df$area  > 0))
+  expect_true(all(sub_df$elev  > 0))
+  expect_true(all(sub_df$len1  > 0))
+  # Lat/lon in WGS84 range for New Zealand
+  expect_true(all(sub_df$lat > -48 & sub_df$lat < -35))
+  expect_true(all(sub_df$lon > 165 & sub_df$lon < 179))
+})
+
+test_that(".build_gis_channels parses the bundled channels.shp correctly", {
+  skip_if_not_installed("sf")
+  skip_if_not_installed("terra")
+
+  subs_path <- extdata("subbasins.shp")
+  ch_path   <- extdata("channels.shp")
+  dem_rast  <- terra::rast(extdata("dem_example.tif"))
+
+  # Build sub_df first (needed for drainage area fallback and subbasin mapping)
+  sub_df <- .build_gis_subbasins(subs_path, dem_rast)
+
+  ch_df <- .build_gis_channels(ch_path, sub_df, dem_rast)
+
+  expect_s3_class(ch_df, "data.frame")
+  # All required SWAT+ gis_channels columns present
+  expect_true(all(c("id", "subbasin", "areac", "strahler",
+                    "len2", "slo2", "wid2", "dep2",
+                    "elevmin", "elevmax", "midlat", "midlon",
+                    ".linkno", ".dslinkno") %in% names(ch_df)))
+  # One channel per feature in the source shapefile
+  expect_equal(nrow(ch_df), nrow(sf::st_read(ch_path, quiet = TRUE)))
+  # Strahler order read from strmOrder field
+  expect_true(all(ch_df$strahler >= 1L))
+  # Channel lengths from LEN field (positive)
+  expect_true(all(ch_df$len2 > 0))
+  # Width/depth always positive
+  expect_true(all(ch_df$wid2 > 0))
+  expect_true(all(ch_df$dep2 > 0))
+  # Mid-point coordinates in WGS84 range for New Zealand
+  expect_true(all(ch_df$midlat > -48 & ch_df$midlat < -35))
+  expect_true(all(ch_df$midlon > 165 & ch_df$midlon < 179))
+})
+
+test_that(".prepare_outlet handles the bundled outlet.shp", {
+  skip_if_not_installed("sf")
+
+  outlet_path <- extdata("outlet.shp")
+  wd <- tempfile("prep_outlet_real_")
+  dir.create(wd)
+  on.exit(unlink(wd, recursive = TRUE))
+
+  # The example outlet is in NZTM (EPSG:2193) — pass the same CRS
+  res <- .prepare_outlet(outlet_path, "EPSG:2193", wd)
+  expect_true(file.exists(res$file))
+  expect_s3_class(res$sf, "sf")
+  expect_equal(nrow(res$sf), 1L)
+})
 
 test_that("use_existing_watershed errors on missing directory", {
   expect_error(
@@ -175,51 +290,47 @@ test_that("use_existing_watershed returns a list from an empty dir", {
 })
 
 # ===========================================================================
-# delineate_watershed() – skip unless TauDEM is available
+# 3. TauDEM integration tests — skipped unless TauDEM is installed
 # ===========================================================================
 
-test_that("delineate_watershed errors when traudem is not installed", {
-  # We can only test this if traudem IS installed but TauDEM is absent,
-  # or if traudem is absent.  Just verify the error condition is checked.
+test_that("delineate_watershed errors when traudem/TauDEM is not available", {
   skip_if(
     requireNamespace("traudem", quietly = TRUE) &&
       traudem::can_register_taudem(),
     "TauDEM is available – skipping absence test"
   )
   expect_error(
-    delineate_watershed(dem = "/tmp/fake.tif",
-                        outlet = data.frame(lon = -88, lat = 43)),
+    delineate_watershed(dem    = "/tmp/fake.tif",
+                        outlet = data.frame(lon = 176.2, lat = -38.1)),
     "traudem|TauDEM"
   )
 })
 
-test_that("delineate_watershed runs end-to-end with traudem test DEM", {
+test_that("delineate_watershed runs end-to-end with bundled DEM and outlet", {
   skip_if_not_installed("traudem")
   skip_if_not_installed("sf")
   skip_if_not_installed("terra")
-  skip_if(!traudem::can_register_taudem(),
-              "TauDEM executables not found")
+  skip_if(!traudem::can_register_taudem(), "TauDEM executables not found")
 
-  dem_path <- system.file("extdata/dem_example.tif", package = "swatplusEditoR")
-  outlet_path <- system.file("extdata/hydro_id_outlet.shp", package = "swatplusEditoR")
-  skip_if(dem_path == "", " test DEM not found")
+  dem_path    <- extdata("dem_example.tif")
+  outlet_path <- extdata("outlet.shp")
+  skip_if(dem_path == "" || outlet_path == "",
+          "Bundled example files not found")
 
-  # The traudem test DEM is small; use a low threshold so streams are found
-  dem_r  <- terra::rast(dem_path)
   outlet <- sf::st_read(outlet_path, quiet = TRUE)
 
   res <- delineate_watershed(
     dem              = dem_path,
     outlet           = outlet,
-    stream_threshold = 200,
-    snap_distance    = 20,
+    stream_threshold = 200L,
+    snap_distance    = 20L,
     verbose          = FALSE
   )
 
   expect_type(res, "list")
   expect_named(res,
-    c("subbasins", "channels", "lsus", "hrus", "water", "points",
-      "aquifers", "routing"))
+    c("subbasins", "channels", "lsus", "hrus", "water",
+      "points", "aquifers", "routing"))
 
   expect_s3_class(res$subbasins, "data.frame")
   expect_s3_class(res$channels,  "data.frame")
@@ -229,8 +340,8 @@ test_that("delineate_watershed runs end-to-end with traudem test DEM", {
 
   expect_gt(nrow(res$subbasins), 0L)
   expect_gt(nrow(res$channels),  0L)
-  expect_equal(nrow(res$lsus),   nrow(res$subbasins))
-  expect_equal(nrow(res$hrus),   nrow(res$lsus))
+  expect_equal(nrow(res$lsus), nrow(res$subbasins))
+  expect_equal(nrow(res$hrus), nrow(res$lsus))
   expect_null(res$water)
   expect_null(res$aquifers)
   expect_true(all(c("id", "area", "slo1", "lat", "lon") %in%
@@ -242,15 +353,16 @@ test_that("delineate_watershed runs end-to-end with traudem test DEM", {
   expect_true("outlet" %in% res$points$ptype)
 })
 
-test_that("delineate_watershed writes to project DB", {
+test_that("delineate_watershed writes gis_* tables to project DB", {
   skip_if_not_installed("traudem")
   skip_if_not_installed("sf")
   skip_if_not_installed("terra")
-  skip_if(!traudem::can_register_taudem(),
-          "TauDEM executables not found")
-  
-  dem_path <- system.file("test-data", "DEM.tif", package = "traudem")
-  skip_if(dem_path == "", "traudem test DEM not found")
+  skip_if(!traudem::can_register_taudem(), "TauDEM executables not found")
+
+  dem_path    <- extdata("dem_example.tif")
+  outlet_path <- extdata("outlet.shp")
+  skip_if(dem_path == "" || outlet_path == "",
+          "Bundled example files not found")
 
   tmp_db <- tempfile(fileext = ".sqlite")
   on.exit(unlink(tmp_db))
@@ -260,33 +372,18 @@ test_that("delineate_watershed writes to project DB", {
   create_project_tables(con)
   swat_close_db(con)
 
-  dem_r  <- terra::rast(dem_path)
-  terra::ext(dem_r) <- terra::ext(1748000, 1748200, 5427000, 5427120)
-  terra::crs(dem_r) <- "EPSG:2193"
-  ext_r  <- terra::ext(dem_r)
-  dem_tmp <- tempfile(fileext = ".tif")
-  terra::writeRaster(dem_r, dem_tmp, overwrite = TRUE)
-  outlet <- sf::st_sf(
-    geometry = sf::st_sfc(
-      sf::st_point(c((ext_r$xmin + ext_r$xmax) / 2,
-                     ext_r$ymin + (ext_r$ymax - ext_r$ymin) * 0.1)),
-      crs = sf::st_crs(dem_r)
-    )
-  )
-  
-  library(tmap)
-  tm_shape(outlet) + tm_dots() + tm_shape(dem_r) + tm_raster() + tm_layout(frame = FALSE)
+  outlet <- sf::st_read(outlet_path, quiet = TRUE)
 
   delineate_watershed(
-    dem              = dem_tmp,
+    dem              = dem_path,
     outlet           = outlet,
     project_db       = tmp_db,
-    stream_threshold = 200,
-    snap_distance    = 20,
-    verbose          = T
+    stream_threshold = 200L,
+    snap_distance    = 20L,
+    verbose          = FALSE
   )
 
-  con <- swat_open_db(tmp_db)
+  con   <- swat_open_db(tmp_db)
   n_sub <- swat_count(con, "gis_subbasins")
   n_ch  <- swat_count(con, "gis_channels")
   n_hru <- swat_count(con, "gis_hrus")

@@ -168,9 +168,12 @@ NULL
 # cross-referencing with channels; caller removes it before DB insert.
 .build_gis_subbasins <- function(watershed_file, dem_rast) {
   wshd     <- sf::st_read(watershed_file, quiet = TRUE)
-  # TauDEM watershed shapefile uses "DN" for the watershed (subbasin) number
-  dn_col   <- if ("DN" %in% names(wshd)) "DN" else names(wshd)[[1L]]
-  ws_ids   <- as.integer(wshd[[dn_col]])
+  # TauDEM watershed shapefile uses "DN"; other tools may use "WSNO" or
+  # "PolygonId".  Fall back to the first non-geometry column.
+  id_candidates <- c("DN", "WSNO", "PolygonId", "SubId")
+  id_col  <- id_candidates[id_candidates %in% names(wshd)]
+  dn_col  <- if (length(id_col)) id_col[[1L]] else names(wshd)[[1L]]
+  ws_ids  <- as.integer(wshd[[dn_col]])
 
   # Areas in ha from projected geometry (already in metres)
   area_ha  <- as.numeric(sf::st_area(wshd)) / 10000
@@ -219,10 +222,16 @@ NULL
   linkno   <- .col(net, c("LINKNO",    "linkno"),   seq_len(nrow(net)))
   dslinkno <- .col(net, c("DSLINKNO",  "dslinkno"), rep(-1L, nrow(net)))
   wsno     <- .col(net, c("WSNO",      "wsno"),     seq_len(nrow(net)))
-  order_v  <- .col(net, c("Order",     "order"),    rep(1L,  nrow(net)))
-  len_m    <- .col(net, c("Length",    "length"),   as.numeric(sf::st_length(net)))
-  slope_v  <- .col(net, c("Slope",     "slope"),    rep(0.001, nrow(net)))
-  da_km2   <- .col(net, c("TotDASqKm","totdasqkm"), rep(NA_real_, nrow(net)))
+  order_v  <- .col(net, c("Order",     "order",    "strmOrder", "StreamOrder",
+                           "Strahler",  "strahler"),
+                   rep(1L,  nrow(net)))
+  len_m    <- .col(net, c("Length",    "length",   "LEN",  "len",
+                           "Shape_Leng","SHAPE_LEN"),
+                   as.numeric(sf::st_length(net)))
+  slope_v  <- .col(net, c("Slope",     "slope",    "SLO",  "slo"),
+                   rep(0.001, nrow(net)))
+  da_km2   <- .col(net, c("TotDASqKm", "totdasqkm","DA_km2","da_km2"),
+                   rep(NA_real_, nrow(net)))
 
   # Drainage area fallback: use corresponding subbasin area
   if (anyNA(da_km2)) {
