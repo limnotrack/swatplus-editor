@@ -713,7 +713,7 @@ create_project_tables <- function(con) {
     CREATE TABLE IF NOT EXISTS hyd_sed_lte_cha (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT NOT NULL UNIQUE,
-      order       TEXT,
+      \"order\"       TEXT,
       wd          REAL NOT NULL DEFAULT 1.0,
       dp          REAL NOT NULL DEFAULT 0.5,
       slp         REAL NOT NULL DEFAULT 0.001,

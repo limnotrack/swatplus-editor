@@ -168,7 +168,10 @@ get_num_format <- function(val, precision = 5L) {
 #' @return Logical \code{TRUE}/\code{FALSE}.
 #' @export
 is_number <- function(s) {
-  tryCatch(!is.na(as.numeric(s)), warning = function(w) FALSE,
+  if (is.null(s)) return(FALSE)
+  
+  tryCatch(!is.na(as.numeric(s)), 
+           warning = function(w) FALSE,
            error = function(e) FALSE)
 }
 
@@ -290,17 +293,26 @@ get_swat_name <- function(prefix, id, max_id) {
 #' @return A new \code{Date} object.
 #' @export
 add_months <- function(sourcedate, months) {
-  mon  <- as.integer(format(sourcedate, "%m")) - 1L + months
-  year <- as.integer(format(sourcedate, "%Y")) + mon %/% 12L
-  mon  <- mon %% 12L + 1L
-  day  <- as.integer(format(sourcedate, "%d"))
-  # clamp to last day of month
-  last_day <- as.integer(format(
-    seq(as.Date(paste(year, mon + 1L, "01", sep = "-")),
-        length.out = 1L, by = "-1 day")
-    , "%d"))
-  day <- min(day, last_day)
-  as.Date(paste(year, mon, day, sep = "-"))
+  # 1. Calculate new month and year basics
+  # Month is 0-indexed (0-11) for the math, then converted back
+  orig_m <- as.integer(format(sourcedate, "%m")) - 1L
+  total_m <- orig_m + months
+  
+  new_m <- (total_m %% 12L) + 1L
+  new_y <- as.integer(format(sourcedate, "%Y")) + (total_m %/% 12L)
+  orig_day <- as.integer(format(sourcedate, "%d"))
+  
+  # 2. Find the last day of the target month
+  # Get the 1st of the NEXT month, then subtract 1 day
+  next_m <- (new_m %% 12L) + 1L
+  next_y <- if(new_m == 12) new_y + 1L else new_y
+  
+  first_of_next_month <- as.Date(sprintf("%d-%02d-01", next_y, next_m))
+  last_day_of_target <- as.integer(format(first_of_next_month - 1, "%d"))
+  
+  # 3. Clamp the day and return
+  final_day <- min(orig_day, last_day_of_target)
+  as.Date(sprintf("%d-%02d-%02d", new_y, new_m, final_day))
 }
 
 # ---------------------------------------------------------------------------

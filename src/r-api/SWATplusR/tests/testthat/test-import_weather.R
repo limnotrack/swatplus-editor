@@ -95,7 +95,7 @@ test_that("import_wgn imports WGN stations and monthly values", {
   # Build project DB
   create_project_db(prj_file)
 
-  n <- import_wgn(prj_file, wgn_file, verbose = FALSE)
+  n <- import_wgn(project_db = prj_file, wgn_db = wgn_file, verbose = FALSE)
   expect_equal(n, 1L)
 
   prj_con <- swat_open_db(prj_file)

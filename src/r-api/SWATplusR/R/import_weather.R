@@ -100,9 +100,11 @@ import_wgn <- function(project_db,
           wide_col <- paste0(col, sfx)
           mon_row[[col]] <- if (wide_col %in% names(row)) row[[wide_col]] else 0.0
         }
+        cnams <- names(mon_row)
+        names(mon_row) <- NULL
         DBI::dbExecute(proj_con, paste0(
           "INSERT INTO weather_wgn_cli_mon (",
-          paste(names(mon_row), collapse = ", "), ") VALUES (",
+          paste(cnams, collapse = ", "), ") VALUES (",
           paste(rep("?", length(mon_row)), collapse = ", "), ")"),
           params = mon_row)
       }

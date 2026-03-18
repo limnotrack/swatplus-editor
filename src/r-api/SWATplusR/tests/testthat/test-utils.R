@@ -42,7 +42,7 @@ test_that("string_pad uses NULL_STR for empty values", {
 
 test_that("num_pad formats to the correct number of decimals", {
   result <- trimws(num_pad(3.14159, decimals = 2,
-                            default_pad = 8, spaces_after = 0))
+                            default_pad = 8))
   expect_equal(result, "3.14")
 })
 

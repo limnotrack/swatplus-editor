@@ -38,7 +38,7 @@ test_that("read_output imports a simple CSV output file", {
   # Write files_out.out
   writeLines("hru_wb_aa.csv", file.path(txt_dir, "files_out.out"))
 
-  counts <- read_output(prj_file, output_db = out_db,
+  counts <- read_output(project_db = prj_file, output_db = out_db,
                         txt_dir = txt_dir, verbose = FALSE)
 
   expect_true("hru_wb_aa" %in% names(counts))
