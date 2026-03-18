@@ -1,4 +1,4 @@
-# SWATplusR
+# swatplusEditoR
 
 An R package that replicates the functionality of the [SWAT+ Editor](https://github.com/limnotrack/swatplus-editor) Python API (`src/api`), adding new capabilities to read spatial data (shapefiles and rasters) directly from R.
 
@@ -8,7 +8,7 @@ An R package that replicates the functionality of the [SWAT+ Editor](https://git
 
 The SWAT+ Editor is a graphical interface for building and managing [SWAT+](https://swatplus.gitbook.io/docs) (Soil and Water Assessment Tool – Plus) hydrological model projects.  Its backend is written in Python (located under `src/api/`).
 
-**SWATplusR** provides an R-native equivalent of that backend so that R users can:
+**swatplusEditoR** provides an R-native equivalent of that backend so that R users can:
 
 - Read **shapefiles** (subbasins, channels, landscape units, HRUs, water bodies, point sources, aquifers) using the [`sf`](https://r-spatial.github.io/sf/) package.
 - Read **raster** data (DEM, land-use, soils) using the [`terra`](https://rspatial.org/terra) package.
@@ -19,6 +19,9 @@ The SWAT+ Editor is a graphical interface for building and managing [SWAT+](http
 - **Run** the SWAT+ executable.
 - **Read** simulation output CSV files back into SQLite.
 - Execute the **complete workflow** from a single `run_all()` call.
+
+For a step-by-step walkthrough, see the
+[**Getting Started vignette**](vignettes/swatplusEditoR.Rmd).
 
 ---
 
