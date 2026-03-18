@@ -53,7 +53,7 @@ install.packages(c("DBI", "RSQLite", "sf", "terra"))
 
 # Install from the repository
 install.packages(
-  "src/r-api/SWATplusR",
+  "src/r-api/swatplusEditoR",
   repos = NULL,
   type  = "source"
 )
@@ -310,7 +310,7 @@ project database, and then runs the GIS import step that converts the raw GIS
 tables into the full SWAT+ model object tables (routing units, channels, HRUs,
 aquifers, connections, etc.).
 
-```{r setup}
+```{r proj-setup}
 setup_project(
   project_db      = project_db,
   datasets_db     = datasets_db,

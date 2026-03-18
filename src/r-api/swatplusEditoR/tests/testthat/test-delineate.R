@@ -197,23 +197,16 @@ test_that("delineate_watershed runs end-to-end with traudem test DEM", {
   skip_if_not_installed("traudem")
   skip_if_not_installed("sf")
   skip_if_not_installed("terra")
-  skip_unless(traudem::can_register_taudem(),
+  skip_if(!traudem::can_register_taudem(),
               "TauDEM executables not found")
 
-  dem_path <- system.file("test-data", "DEM.tif", package = "traudem")
-  skip_if(dem_path == "", "traudem test DEM not found")
+  dem_path <- system.file("extdata/dem_example.tif", package = "swatplusEditoR")
+  outlet_path <- system.file("extdata/hydro_id_outlet.shp", package = "swatplusEditoR")
+  skip_if(dem_path == "", " test DEM not found")
 
   # The traudem test DEM is small; use a low threshold so streams are found
   dem_r  <- terra::rast(dem_path)
-  ext_r  <- terra::ext(dem_r)
-  # Place the outlet at roughly the lowest corner of the DEM
-  outlet <- sf::st_sf(
-    geometry = sf::st_sfc(
-      sf::st_point(c((ext_r$xmin + ext_r$xmax) / 2,
-                     ext_r$ymin + (ext_r$ymax - ext_r$ymin) * 0.1)),
-      crs = sf::st_crs(dem_r)
-    )
-  )
+  outlet <- sf::st_read(outlet_path, quiet = TRUE)
 
   res <- delineate_watershed(
     dem              = dem_path,
@@ -253,9 +246,9 @@ test_that("delineate_watershed writes to project DB", {
   skip_if_not_installed("traudem")
   skip_if_not_installed("sf")
   skip_if_not_installed("terra")
-  skip_unless(traudem::can_register_taudem(),
-              "TauDEM executables not found")
-
+  skip_if(!traudem::can_register_taudem(),
+          "TauDEM executables not found")
+  
   dem_path <- system.file("test-data", "DEM.tif", package = "traudem")
   skip_if(dem_path == "", "traudem test DEM not found")
 
@@ -268,7 +261,11 @@ test_that("delineate_watershed writes to project DB", {
   swat_close_db(con)
 
   dem_r  <- terra::rast(dem_path)
+  terra::ext(dem_r) <- terra::ext(1748000, 1748200, 5427000, 5427120)
+  terra::crs(dem_r) <- "EPSG:2193"
   ext_r  <- terra::ext(dem_r)
+  dem_tmp <- tempfile(fileext = ".tif")
+  terra::writeRaster(dem_r, dem_tmp, overwrite = TRUE)
   outlet <- sf::st_sf(
     geometry = sf::st_sfc(
       sf::st_point(c((ext_r$xmin + ext_r$xmax) / 2,
@@ -276,14 +273,17 @@ test_that("delineate_watershed writes to project DB", {
       crs = sf::st_crs(dem_r)
     )
   )
+  
+  library(tmap)
+  tm_shape(outlet) + tm_dots() + tm_shape(dem_r) + tm_raster() + tm_layout(frame = FALSE)
 
   delineate_watershed(
-    dem              = dem_path,
+    dem              = dem_tmp,
     outlet           = outlet,
     project_db       = tmp_db,
     stream_threshold = 200,
     snap_distance    = 20,
-    verbose          = FALSE
+    verbose          = T
   )
 
   con <- swat_open_db(tmp_db)

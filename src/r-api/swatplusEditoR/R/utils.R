@@ -1,4 +1,4 @@
-#' General utility functions for SWATplusR
+#' General utility functions for swatplusEditoR
 #'
 #' Mirrors the functionality of src/api/helpers/utils.py
 #' @keywords internal

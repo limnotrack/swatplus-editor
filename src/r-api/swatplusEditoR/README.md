@@ -29,7 +29,7 @@ For a step-by-step walkthrough, see the
 
 ```r
 # Install from the local source directory
-install.packages("src/r-api/SWATplusR",
+install.packages("src/r-api/swatplusEditoR",
                  repos = NULL,
                  type  = "source")
 ```
@@ -37,8 +37,8 @@ install.packages("src/r-api/SWATplusR",
 Or with `devtools` / `pak`:
 
 ```r
-devtools::install_local("src/r-api/SWATplusR")
-pak::local_install("src/r-api/SWATplusR")
+devtools::install_local("src/r-api/swatplusEditoR")
+pak::local_install("src/r-api/swatplusEditoR")
 ```
 
 ### Dependencies
@@ -60,7 +60,7 @@ pak::local_install("src/r-api/SWATplusR")
 ### 1 – Create a project database and import GIS shapefiles
 
 ```r
-library(SWATplusR)
+library(swatplusEditoR)
 
 project_db  <- "/path/to/myproject/myproject.sqlite"
 datasets_db <- "/path/to/swatplus_datasets.sqlite"
@@ -148,7 +148,7 @@ run_all(
 ## Package Structure
 
 ```
-src/r-api/SWATplusR/
+src/r-api/swatplusEditoR/
 ├── DESCRIPTION
 ├── NAMESPACE
 ├── R/
@@ -210,8 +210,8 @@ src/r-api/SWATplusR/
 
 ```r
 # Run the test suite
-testthat::test_local("src/r-api/SWATplusR")
+testthat::test_local("src/r-api/swatplusEditoR")
 
 # Build documentation
-roxygen2::roxygenise("src/r-api/SWATplusR")
+roxygen2::roxygenise("src/r-api/swatplusEditoR")
 ```

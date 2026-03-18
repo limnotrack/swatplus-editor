@@ -1,4 +1,4 @@
-library(SWATplusR)
+library(swatplusEditoR)
 library(testthat)
 
 # ---------------------------------------------------------------------------

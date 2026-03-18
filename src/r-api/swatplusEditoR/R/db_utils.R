@@ -1,4 +1,4 @@
-#' Database utility functions for SWATplusR
+#' Database utility functions for swatplusEditoR
 #'
 #' Mirrors the functionality of src/api/database/lib.py, providing low-level
 #' SQLite helpers used by all higher-level operations.

@@ -1,4 +1,4 @@
-library(SWATplusR)
+library(swatplusEditoR)
 library(testthat)
 library(DBI)
 library(RSQLite)
@@ -189,7 +189,7 @@ test_that("import_gis sets imported_gis = 1 in project_config", {
 
 test_that(".get_slope_len returns correct values", {
   # Test via export or directly – use an environment workaround
-  f <- SWATplusR:::.get_slope_len
+  f <- swatplusEditoR:::.get_slope_len
   if (is.null(f)) skip("Internal function not accessible")
   expect_equal(f(0),  121)
   expect_equal(f(2),   90)
@@ -199,7 +199,7 @@ test_that(".get_slope_len returns correct values", {
 })
 
 test_that(".get_perco_cn3_swf_latq_co returns valid results for hyd group A", {
-  f <- SWATplusR:::.get_perco_cn3_swf_latq_co
+  f <- swatplusEditoR:::.get_perco_cn3_swf_latq_co
   if (is.null(f)) skip("Internal function not accessible")
   res <- f("A", 5)
   expect_true(is.list(res))

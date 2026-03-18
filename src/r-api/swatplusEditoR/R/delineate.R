@@ -562,7 +562,7 @@ delineate_watershed <- function(dem,
       on.exit(unlink(work_dir, recursive = TRUE), add = TRUE)
   }
 
-  if (verbose) emit_progress("Preparing DEM and outlet...")
+  if (verbose) emit_progress(0, "Preparing DEM and outlet...")
 
   dem_info    <- .prepare_dem(dem, work_dir, verbose)
   dem_file    <- dem_info$dem_file
@@ -575,24 +575,24 @@ delineate_watershed <- function(dem,
   # TauDEM pipeline
   # -------------------------------------------------------------------------
 
-  if (verbose) emit_progress("Step 1/7: Pit Remove...")
+  if (verbose) emit_progress(1/7, "Step 1/7: Pit Remove...")
   dem_fel <- traudem::taudem_pitremove(dem_file, quiet = !verbose)
 
-  if (verbose) emit_progress("Step 2/7: D8 Flow Directions...")
+  if (verbose) emit_progress(2/7, "Step 2/7: D8 Flow Directions...")
   flow_out     <- traudem::taudem_d8flowdir(dem_fel, quiet = !verbose)
   flowdir_file <- flow_out$output_d8flowdir_grid
 
-  if (verbose) emit_progress("Step 3/7: D8 Contributing Area (full DEM)...")
+  if (verbose) emit_progress(3/7, "Step 3/7: D8 Contributing Area (full DEM)...")
   ad8_full <- traudem::taudem_aread8(flowdir_file, quiet = !verbose)
 
-  if (verbose) emit_progress("Step 4/7: Stream Definition by Threshold...")
+  if (verbose) emit_progress(4/7, "Step 4/7: Stream Definition by Threshold...")
   src_file <- traudem::taudem_threshold(
     ad8_full,
     threshold_parameter = stream_threshold,
     quiet               = !verbose
   )
 
-  if (verbose) emit_progress("Step 5/7: Moving outlet to nearest stream...")
+  if (verbose) emit_progress(5/7, "Step 5/7: Moving outlet to nearest stream...")
   outlet_snapped <- traudem::taudem_moveoutletstostream(
     input_d8flowdir_grid     = flowdir_file,
     input_stream_raster_grid = src_file,
@@ -601,14 +601,14 @@ delineate_watershed <- function(dem,
     quiet                    = !verbose
   )
 
-  if (verbose) emit_progress("Step 6/7: D8 Contributing Area (from outlet)...")
+  if (verbose) emit_progress(6/7, "Step 6/7: D8 Contributing Area (from outlet)...")
   ad8_outlet <- traudem::taudem_aread8(
     flowdir_file,
     outlet_file = outlet_snapped,
     quiet       = !verbose
   )
 
-  if (verbose) emit_progress("Step 7/7: Stream Net (stream network + watershed polygons)...")
+  if (verbose) emit_progress(7/7, "Step 7/7: Stream Net (stream network + watershed polygons)...")
   net_file       <- file.path(work_dir, "net.shp")
   watershed_file <- file.path(work_dir, "watershed.shp")
   order_file     <- file.path(work_dir, "ord.tif")
