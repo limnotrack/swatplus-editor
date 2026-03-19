@@ -702,7 +702,7 @@ delineate_watershed <- function(dem,
   # Steps: 9 base + 2 extra when dual-threshold (channel threshold + StreamNet).
   # Note: the gridnet re-run after outlet snapping is a quick internal step
   # and is not counted separately in the progress tracker.
-  n_steps <- if (use_dual_threshold) 11L else 9L
+  n_steps <- if (use_dual_threshold) 11L else 12L
   step_n  <- 0L
   .step <- function(msg) {
     step_n <<- step_n + 1L
@@ -726,14 +726,31 @@ delineate_watershed <- function(dem,
 
   .step("Pit Remove (fill sinks)...")
   dem_fel <- traudem::taudem_pitremove(dem_file, quiet = !verbose)
+  # dem <- terra::rast(dem_file)
+  # dem <- terra::fillHoles(dem)
+  # terra::writeRaster(dem, dem_file, overwrite = TRUE)
+  # dem_fill <- terra::rast(dem_fel)
+  # dem_diff <- dem_fill - dem
+  # terra::plot(dem_diff)
 
   .step("D8 Flow Directions...")
   flow_out     <- traudem::taudem_d8flowdir(dem_fel, quiet = !verbose)
   flowdir_file <- flow_out$output_d8flowdir_grid
+  # flowdir <- terra::rast(flowdir_file)
+  # terra::plot(flowdir)
 
   .step("D8 Contributing Area (full DEM)...")
-  ad8_full <- traudem::taudem_aread8(flowdir_file, quiet = !verbose)
-
+  ad8_full <- tempfile(fileext = ".tif")
+  traudem::taudem_exec(
+    # n_processes = n_processes,
+    program     = "aread8",
+    args        = c("-p", flowdir_file, "-ad8", ad8_full, "-nc")
+  )
+  # ad8_full <- traudem::taudem_aread8(flowdir_file, quiet = !verbose)
+  # ad8 <- terra::rast(ad8_full)
+  # terra::plot(ad8)
+  # terra::plot(is.na(ad8))
+  
   # --- Grid Network (QSWATPlus always runs this after AreaD8) ---------------
   # Computes path lengths (plen, tlen) and grid order (gord).
   gord_file <- file.path(work_dir, "gord.tif")
@@ -783,7 +800,7 @@ delineate_watershed <- function(dem,
   # Overwrites gord/plen/tlen with outlet-bounded values.  Not counted as a
   # separate progress step (fast, internal) but logged when verbose = TRUE.
   if (verbose)
-    emit_progress("Grid Network (outlet-bounded, re-run)...")
+    .step("Grid Network (outlet-bounded, re-run)...")
   .run_gridnet(flowdir_file, gord_file, plen_file, tlen_file,
                outlet_file = outlet_snapped,
                n_processes = n_processes, verbose = verbose)
@@ -881,8 +898,9 @@ delineate_watershed <- function(dem,
   # TauDEM 5.3 -w output is a raster grid; convert to vector polygons here,
   # replicating QSWATPlus's createWatershedShapefile() step.
   # -------------------------------------------------------------------------
-  if (verbose) emit_progress("Polygonising watershed raster to subbasin polygons...")
+  if (verbose) .step("Polygonising watershed raster to subbasin polygons...")
 
+  ws <- terra::rast(wstream_file)
   watershed_sf  <- .vectorise_watershed_raster(wstream_file)
   watershed_shp <- file.path(work_dir, "watershed.shp")
   sf::st_write(watershed_sf, watershed_shp, quiet = TRUE, delete_dsn = TRUE)
@@ -895,7 +913,7 @@ delineate_watershed <- function(dem,
   # Parse TauDEM outputs → gis_* data.frames
   # -------------------------------------------------------------------------
 
-  if (verbose) emit_progress("Parsing delineation results into SWAT+ GIS tables...")
+  if (verbose) .step("Parsing delineation results into SWAT+ GIS tables...")
 
   sub_df <- .build_gis_subbasins(watershed_shp, dem_rast)
   ch_df  <- .build_gis_channels(channel_net_file, sub_df, dem_rast)
@@ -932,7 +950,7 @@ delineate_watershed <- function(dem,
   )
 
   if (verbose)
-    emit_progress(sprintf(
+    emit_progress(12, sprintf(
       "Delineation complete: %d subbasin(s), %d channel(s), %d HRU(s).",
       nrow(sub_df), nrow(ch_df), nrow(hru_df)
     ))
@@ -942,7 +960,7 @@ delineate_watershed <- function(dem,
   # -------------------------------------------------------------------------
 
   if (!is.null(project_db)) {
-    if (verbose) emit_progress("Writing GIS tables to project database...")
+    if (verbose) emit_progress(13, "Writing GIS tables to project database...")
     con <- swat_open_db(project_db)
     write_gis_to_db(
       con           = con,
