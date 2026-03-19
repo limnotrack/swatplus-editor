@@ -8,11 +8,15 @@ Authors@R: c(
            email = "swatplus@example.com")
   )
 Description: An R package that replicates the functionality of the SWAT+
-    Editor Python API (src/api). Provides tools to read shapefiles and raster
-    data, write to the dedicated SWAT+ SQLite project database, import GIS
-    data, import weather data, write SWAT+ input files, run the SWAT+ model,
-    and read simulation output. This package serves as an R-native alternative
-    to the Python-based SWAT+ Editor backend.
+    Editor Python API (src/api) and adds watershed delineation capabilities.
+    Provides tools to delineate watersheds from a DEM using TauDEM (via the
+    'traudem' package) — equivalent to what QSWAT+ (<https://github.com/swat-model/QSWATPlus>)
+    does in a desktop workflow, but without requiring QGIS or QSWAT+. Also
+    provides tools to read shapefiles and raster data, write to the dedicated
+    SWAT+ SQLite project database, import GIS data, import weather data, write
+    SWAT+ input files, run the SWAT+ model, and read simulation output. This
+    package serves as an R-native alternative to the Python-based SWAT+ Editor
+    backend combined with QSWAT+ for the full end-to-end workflow.
 License: GPL-3
 URL: https://github.com/limnotrack/swatplus-editor
 BugReports: https://github.com/limnotrack/swatplus-editor/issues

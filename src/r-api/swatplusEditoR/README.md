@@ -1,6 +1,6 @@
 # swatplusEditoR
 
-An R package that replicates the functionality of the [SWAT+ Editor](https://github.com/limnotrack/swatplus-editor) Python API (`src/api`), adding new capabilities to read spatial data (shapefiles and rasters) directly from R.
+An R package that replicates the functionality of the [SWAT+ Editor](https://github.com/limnotrack/swatplus-editor) Python API (`src/api`), adding new capabilities to read spatial data (shapefiles and rasters) directly from R and to delineate watersheds using TauDEM without requiring [QSWAT+](https://github.com/swat-model/QSWATPlus).
 
 ---
 
@@ -8,8 +8,11 @@ An R package that replicates the functionality of the [SWAT+ Editor](https://git
 
 The SWAT+ Editor is a graphical interface for building and managing [SWAT+](https://swatplus.gitbook.io/docs) (Soil and Water Assessment Tool – Plus) hydrological model projects.  Its backend is written in Python (located under `src/api/`).
 
-**swatplusEditoR** provides an R-native equivalent of that backend so that R users can:
+In the standard desktop workflow, watershed delineation is handled by [QSWAT+](https://github.com/swat-model/QSWATPlus) — a QGIS plugin that calls [TauDEM](https://hydrology.usu.edu/taudem/taudem5/) internally — and the SWAT+ Editor Python API only imports the *results* of that step.
 
+**swatplusEditoR** provides an R-native equivalent of the full workflow so that R users can:
+
+- **Delineate** a watershed from a DEM using TauDEM (via the [`traudem`](https://github.com/lucarraro/traudem) package), replicating what QSWAT+ does — without needing QGIS or QSWAT+ installed.
 - Read **shapefiles** (subbasins, channels, landscape units, HRUs, water bodies, point sources, aquifers) using the [`sf`](https://r-spatial.github.io/sf/) package.
 - Read **raster** data (DEM, land-use, soils) using the [`terra`](https://rspatial.org/terra) package.
 - **Write** all spatial and tabular GIS data to the dedicated SWAT+ SQLite project database.

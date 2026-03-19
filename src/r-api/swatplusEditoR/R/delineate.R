@@ -1,14 +1,21 @@
 #' Watershed delineation and existing-watershed import
 #'
-#' Provides two high-level functions that mirror the
+#' Provides two high-level functions that parallel the
 #' \strong{"Delineate watershed"} and \strong{"Use existing watershed"} options
-#' found in the SWAT+ Editor GUI:
+#' found in the SWAT+ Editor GUI.  Note that watershed delineation is
+#' \strong{not} part of the SWAT+ Editor Python API (\code{src/api/}): in a
+#' typical desktop workflow it is handled by
+#' \href{https://github.com/swat-model/QSWATPlus}{QSWAT+} (a QGIS plugin that
+#' calls TauDEM internally), and the Python API only imports the
+#' \emph{results}.  These functions replicate that capability from R so that
+#' QGIS / QSWAT+ are not required.
 #'
 #' \describe{
 #'   \item{\code{\link{delineate_watershed}}}{Runs a complete TauDEM pipeline
 #'     on a digital elevation model (DEM) to delineate a new watershed from
 #'     scratch, producing all \code{gis_*} tables needed by
-#'     \code{\link{import_gis}}.}
+#'     \code{\link{import_gis}}.  Uses the same TauDEM engine as QSWAT+,
+#'     accessed via the \pkg{traudem} R package.}
 #'   \item{\code{\link{use_existing_watershed}}}{Reads pre-delineated
 #'     shapefiles produced by QSWAT+ or ArcSWAT+ and writes them to a SWAT+
 #'     project database, mirroring the "Use existing watershed" workflow.}

@@ -23,7 +23,12 @@ a new watershed from a DEM, or loading one that was already delineated in
 QSWAT+ or ArcSWAT+.
 
 The workflow mirrors the steps in the SWAT+ Editor GUI and its Python API
-(`src/api/`).
+(`src/api/`), with one important distinction: **watershed delineation is not
+part of the SWAT+ Editor Python API**.  In a typical desktop workflow,
+delineation is handled by [QSWAT+](https://github.com/swat-model/QSWATPlus)
+(a QGIS plugin that calls TauDEM internally); the Python API only imports the
+*results* of that step.  `delineate_watershed()` brings this capability
+directly into R so that the QSWAT+ dependency can be avoided entirely.
 
 ```
    Path A: Delineate watershed        Path B: Use existing watershed
@@ -82,7 +87,7 @@ of the workflow is identical regardless of which path you take.
 
 ## Option A — Delineate watershed with TauDEM
 
-`delineate_watershed()` uses the [TauDEM](https://hydrology.usu.edu/taudem/taudem5/) hydrological analysis library (the same engine used by QSWAT+ internally) via the [`traudem`](https://github.com/lucarraro/traudem) R package.
+`delineate_watershed()` uses the [TauDEM](https://hydrology.usu.edu/taudem/taudem5/) hydrological analysis library via the [`traudem`](https://github.com/lucarraro/traudem) R package.  TauDEM is the same engine used by [QSWAT+](https://github.com/swat-model/QSWATPlus) (a QGIS plugin) for watershed delineation; this function provides the equivalent capability from within R, without requiring QGIS or QSWAT+ to be installed.
 
 ### Install TauDEM and traudem
 
