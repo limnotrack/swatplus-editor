@@ -26,12 +26,29 @@ test_that("weather_sta_name handles southern and eastern hemisphere", {
 # import_wgn (file-based)
 # ---------------------------------------------------------------------------
 
-test_that("Import weater station data", {
+test_that("Import weather station data from era5 files", {
   weather_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
-  weather_fils <- list.files(weather_dir, full.names = TRUE)
+  skip_if(weather_dir == "", "era5 extdata not found")
   prj_file <- tempfile(fileext = ".sqlite")
-  import_weather(project_db = prj_file, weather_dir = weather_dir, 
-                 verbose = FALSE)
+  on.exit(unlink(prj_file), add = TRUE)
+
+  create_project_db(prj_file)
+  n_sta <- import_weather(project_db = prj_file, weather_dir = weather_dir,
+                          verbose = FALSE)
+
+  # One unique (lat, lon) combination in the era5 folder → one station
+  expect_equal(n_sta, 1L)
+
+  con <- swat_open_db(prj_file)
+  on.exit(swat_close_db(con), add = TRUE)
+  expect_equal(swat_count(con, "weather_sta_cli"), 1L)
+  sta <- DBI::dbGetQuery(con, "SELECT name, lat, lon FROM weather_sta_cli")
+  # lat/lon should be parsed from file header, not zero
+  expect_true(sta$lat != 0.0 || sta$lon != 0.0)
+
+  # weather_file entries must have non-zero lat/lon
+  wf <- DBI::dbGetQuery(con, "SELECT lat, lon FROM weather_file")
+  expect_true(all(wf$lat != 0.0 | wf$lon != 0.0))
 })
 
 test_that("import_wgn imports WGN stations and monthly values", {

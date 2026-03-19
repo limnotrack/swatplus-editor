@@ -31,6 +31,11 @@ NULL
 # Internal helpers
 # ===========================================================================
 
+# Strip sf geometry column if present; otherwise return x unchanged.
+.drop_geom <- function(x) {
+  if (!is.null(x) && inherits(x, "sf")) sf::st_drop_geometry(x) else x
+}
+
 # Check that the traudem package is installed and TauDEM is on PATH.
 .check_traudem <- function() {
   if (!requireNamespace("traudem", quietly = TRUE)) {
@@ -662,16 +667,26 @@ NULL
 #'
 #' @return A named list:
 #' \describe{
-#'   \item{\code{subbasins}}{data.frame for \code{gis_subbasins}}
-#'   \item{\code{channels}}{data.frame for \code{gis_channels}}
-#'   \item{\code{lsus}}{data.frame for \code{gis_lsus}}
-#'   \item{\code{hrus}}{data.frame for \code{gis_hrus} (one per LSU)}
+#'   \item{\code{subbasins}}{\code{sf} polygon (or \code{data.frame} when
+#'     \code{return_sf = FALSE}) for \code{gis_subbasins}}
+#'   \item{\code{channels}}{\code{sf} linestring (or \code{data.frame}) for
+#'     \code{gis_channels}}
+#'   \item{\code{lsus}}{\code{sf} polygon (or \code{data.frame}) for
+#'     \code{gis_lsus}}
+#'   \item{\code{hrus}}{\code{sf} polygon (or \code{data.frame}) for
+#'     \code{gis_hrus} (one per LSU)}
 #'   \item{\code{water}}{NULL (water bodies not delineated)}
-#'   \item{\code{points}}{data.frame for \code{gis_points} (snapped outlets)}
+#'   \item{\code{points}}{\code{sf} point (or \code{data.frame}) for
+#'     \code{gis_points} (snapped outlets)}
 #'   \item{\code{aquifers}}{NULL}
 #'   \item{\code{routing}}{data.frame for \code{gis_routing}}
 #' }
 #' Returned invisibly when \code{project_db} is provided.
+#' @param return_sf Logical.  When \code{TRUE} (default) the spatial elements
+#'   of the returned list (\code{subbasins}, \code{channels}, \code{lsus},
+#'   \code{hrus}, \code{points}) are returned as \code{sf} objects (WGS84),
+#'   allowing direct use with \pkg{sf} and \pkg{ggplot2}.  Set to \code{FALSE}
+#'   to get bare \code{data.frame}s (previous behaviour).
 #'
 #' @seealso \code{\link{use_existing_watershed}},
 #'   \code{\link{write_gis_to_db}}, \code{\link{setup_project}},
@@ -687,6 +702,7 @@ delineate_watershed <- function(dem,
                                 n_processes       = 1L,
                                 work_dir          = NULL,
                                 keep_work_dir     = FALSE,
+                                return_sf         = TRUE,
                                 verbose           = TRUE) {
   .check_traudem()
 
@@ -941,10 +957,37 @@ delineate_watershed <- function(dem,
   rout_df <- .build_gis_routing(lsu_df, ch_df)
   pts_df  <- .build_gis_points(outlet_snapped, watershed_shp, dem_rast)
 
-  # Remove internal helper columns before returning / inserting
-  sub_df$.wsno    <- NULL
-  ch_df$.linkno   <- NULL
-  ch_df$.dslinkno <- NULL
+  # Optionally attach WGS84 geometry to spatial tables so the returned list
+  # contains sf objects that can be inspected with sf / ggplot2.
+  if (return_sf) {
+    # Subbasin polygons: watershed_sf is already in WGS84
+    sub_geom <- sf::st_geometry(sf::st_transform(watershed_sf, 4326L))
+    sub_df   <- sf::st_sf(sub_df[, setdiff(names(sub_df), ".wsno")],
+                          geometry = sub_geom)
+
+    # Channel lines
+    ch_net  <- sf::st_read(channel_net_file, quiet = TRUE)
+    ch_geom <- sf::st_geometry(sf::st_transform(ch_net, 4326L))
+    ch_attrs <- ch_df[, setdiff(names(ch_df), c(".linkno", ".dslinkno")),
+                      drop = FALSE]
+    ch_df   <- sf::st_sf(ch_attrs, geometry = ch_geom)
+
+    # LSUs share the subbasin footprints (one LSU per subbasin in simple mode)
+    lsu_df <- sf::st_sf(lsu_df, geometry = sub_geom)
+
+    # HRUs share the subbasin footprints (one HRU per LSU per subbasin)
+    hru_df <- sf::st_sf(hru_df, geometry = sub_geom)
+
+    # Outlet points: re-read snapped outlet in WGS84
+    outlet_pts  <- sf::st_read(outlet_snapped, quiet = TRUE)
+    outlet_pts  <- sf::st_transform(outlet_pts, 4326L)
+    pts_df <- sf::st_sf(pts_df, geometry = sf::st_geometry(outlet_pts))
+  } else {
+    # Remove internal helper columns when not returning sf
+    sub_df$.wsno    <- NULL
+    ch_df$.linkno   <- NULL
+    ch_df$.dslinkno <- NULL
+  }
 
   gis_data <- list(
     subbasins = sub_df,
@@ -972,12 +1015,12 @@ delineate_watershed <- function(dem,
     con <- swat_open_db(project_db)
     write_gis_to_db(
       con           = con,
-      subbasins     = gis_data$subbasins,
-      channels      = gis_data$channels,
-      lsus          = gis_data$lsus,
-      hrus          = gis_data$hrus,
+      subbasins     = .drop_geom(gis_data$subbasins),
+      channels      = .drop_geom(gis_data$channels),
+      lsus          = .drop_geom(gis_data$lsus),
+      hrus          = .drop_geom(gis_data$hrus),
       water         = NULL,
-      points        = gis_data$points,
+      points        = .drop_geom(gis_data$points),
       aquifers      = NULL,
       deep_aquifers = NULL,
       routing       = gis_data$routing
@@ -1039,12 +1082,19 @@ delineate_watershed <- function(dem,
 #'   (default) or \code{"arcgis"}.  Stored in \code{project_config.gis_type}.
 #' @param gis_version Version string of the GIS software (e.g.
 #'   \code{"3.40.3-Bratislava"}).  Stored in \code{project_config.gis_version}.
+#' @param return_sf Logical.  When \code{TRUE} (default) the spatial elements
+#'   of the returned list (\code{subbasins}, \code{channels}, \code{lsus},
+#'   \code{hrus}, \code{water}, \code{points}) are returned as \code{sf}
+#'   objects (WGS84) instead of plain \code{data.frame}s, allowing direct use
+#'   with \pkg{sf} and \pkg{ggplot2}.  Set to \code{FALSE} to get bare
+#'   \code{data.frame}s (previous behaviour).
 #' @param verbose Print progress messages.  Default \code{TRUE}.
 #'
 #' @return A named list with components \code{subbasins}, \code{channels},
 #'   \code{lsus}, \code{hrus}, \code{water}, \code{points},
 #'   \code{aquifers}, \code{deep_aquifers} (as returned by
 #'   \code{\link{read_swatplus_gis}}).
+#'   When \code{return_sf = TRUE} the spatial components are \code{sf} objects.
 #'   Returned invisibly when \code{project_db} is provided.
 #'
 #' @seealso \code{\link{delineate_watershed}}, \code{\link{read_swatplus_gis}},
@@ -1055,13 +1105,16 @@ use_existing_watershed <- function(gis_dir,
                                    dem_file    = NULL,
                                    gis_type    = "qgis",
                                    gis_version = NULL,
+                                   return_sf   = TRUE,
                                    verbose     = TRUE) {
   if (!dir.exists(gis_dir))
     stop("gis_dir not found: ", gis_dir, call. = FALSE)
 
   if (verbose) emit_progress("Reading existing watershed shapefiles...")
 
-  gis_data <- read_swatplus_gis(gis_dir = gis_dir, dem_file = dem_file)
+  gis_data <- read_swatplus_gis(gis_dir       = gis_dir,
+                                dem_file      = dem_file,
+                                keep_geometry = return_sf)
 
   n_sub <- if (!is.null(gis_data$subbasins)) nrow(gis_data$subbasins) else 0L
   n_ch  <- if (!is.null(gis_data$channels))  nrow(gis_data$channels)  else 0L
@@ -1079,12 +1132,12 @@ use_existing_watershed <- function(gis_dir,
     con <- swat_open_db(project_db)
     write_gis_to_db(
       con           = con,
-      subbasins     = gis_data$subbasins,
-      channels      = gis_data$channels,
-      lsus          = gis_data$lsus,
-      hrus          = gis_data$hrus,
-      water         = gis_data$water,
-      points        = gis_data$points,
+      subbasins     = .drop_geom(gis_data$subbasins),
+      channels      = .drop_geom(gis_data$channels),
+      lsus          = .drop_geom(gis_data$lsus),
+      hrus          = .drop_geom(gis_data$hrus),
+      water         = .drop_geom(gis_data$water),
+      points        = .drop_geom(gis_data$points),
       aquifers      = gis_data$aquifers,
       deep_aquifers = gis_data$deep_aquifers
     )

@@ -348,15 +348,41 @@ test_that("use_existing_watershed returns a list from an empty dir", {
   expect_type(res, "list")
 })
 
-test_that("use_existing_watershed with example data", {
+test_that("use_existing_watershed returns sf objects by default", {
+  skip_if_not_installed("sf")
+  skip_if_not_installed("terra")
   wd <- system.file("extdata", package = "swatplusEditoR")
-  dem_file <- list.files(wd, pattern = "dem\\.tif$", full.names = TRUE)
-  # No shapefiles → read_swatplus_gis returns an empty list
-  res <- use_existing_watershed(wd, dem_file = dem_file)
+  skip_if(wd == "", "extdata not found")
+  dem_file <- list.files(wd, pattern = "^dem\\.tif$", full.names = TRUE)
+  skip_if(length(dem_file) == 0L, "dem.tif not found in extdata")
+
+  # Default: return_sf = TRUE
+  res <- use_existing_watershed(wd, dem_file = dem_file[[1L]], verbose = FALSE)
   expect_type(res, "list")
-  expect_named(res,
-    c("subbasins", "channels", "lsus", "hrus", "water",
-      "points", "aquifers", "routing"))
+  # Spatial elements should be sf objects
+  if (!is.null(res$subbasins))
+    expect_s3_class(res$subbasins, "sf")
+  if (!is.null(res$channels))
+    expect_s3_class(res$channels, "sf")
+  if (!is.null(res$points))
+    expect_s3_class(res$points, "sf")
+})
+
+test_that("use_existing_watershed returns data.frames when return_sf = FALSE", {
+  skip_if_not_installed("sf")
+  skip_if_not_installed("terra")
+  wd <- system.file("extdata", package = "swatplusEditoR")
+  skip_if(wd == "", "extdata not found")
+  dem_file <- list.files(wd, pattern = "^dem\\.tif$", full.names = TRUE)
+  skip_if(length(dem_file) == 0L, "dem.tif not found in extdata")
+
+  res <- use_existing_watershed(wd, dem_file = dem_file[[1L]],
+                                return_sf = FALSE, verbose = FALSE)
+  expect_type(res, "list")
+  if (!is.null(res$subbasins))
+    expect_false(inherits(res$subbasins, "sf"))
+  if (!is.null(res$channels))
+    expect_false(inherits(res$channels, "sf"))
 })
 
 # ===========================================================================

@@ -29,13 +29,20 @@ NULL
 #'   are absent in the shapefile).
 #' @param area_col   Column name for area (ha).  Default \code{"area"}.
 #' @param slope_col  Column name for mean slope (\%).  Default \code{"slo1"}.
-#' @return A \code{data.frame} suitable for inserting into \code{gis_subbasins}.
-#' @importFrom sf st_read st_centroid st_coordinates st_transform st_crs
+#' @param keep_geometry Logical.  When \code{TRUE} the WGS84 geometry column
+#'   from the source shapefile is retained and an \code{sf} object is returned
+#'   instead of a plain \code{data.frame}.  Default \code{FALSE}.
+#' @return A \code{data.frame} (or \code{sf} object when
+#'   \code{keep_geometry = TRUE}) suitable for inserting into
+#'   \code{gis_subbasins}.
+#' @importFrom sf st_read st_centroid st_coordinates st_transform st_crs st_sf
+#'   st_geometry
 #' @importFrom terra extract
 #' @export
 read_subbasins_shp <- function(path, dem = NULL,
-                               area_col  = "area",
-                               slope_col = "slo1") {
+                               area_col      = "area",
+                               slope_col     = "slo1",
+                               keep_geometry = FALSE) {
   shp <- sf::st_read(path, quiet = TRUE)
   shp <- .normalize_crs(shp)
 
@@ -77,7 +84,7 @@ read_subbasins_shp <- function(path, dem = NULL,
   out$elevmin[is.na(out$elevmin)] <- 0.0
   out$elevmax[is.na(out$elevmax)] <- 0.0
 
-  out
+  if (keep_geometry) sf::st_sf(out, geometry = sf::st_geometry(shp)) else out
 }
 
 #' Read a channels shapefile and return a data.frame for \code{gis_channels}
@@ -88,10 +95,13 @@ read_subbasins_shp <- function(path, dem = NULL,
 #'
 #' @param path Path to the shapefile.
 #' @param dem  Optional DEM \code{SpatRaster} for elevation extraction.
-#' @return A \code{data.frame} for \code{gis_channels}.
-#' @importFrom sf st_read st_centroid st_coordinates
+#' @param keep_geometry Logical.  When \code{TRUE} the WGS84 geometry column is
+#'   retained and an \code{sf} object is returned.  Default \code{FALSE}.
+#' @return A \code{data.frame} (or \code{sf} when \code{keep_geometry = TRUE})
+#'   for \code{gis_channels}.
+#' @importFrom sf st_read st_centroid st_coordinates st_sf st_geometry
 #' @export
-read_channels_shp <- function(path, dem = NULL) {
+read_channels_shp <- function(path, dem = NULL, keep_geometry = FALSE) {
   shp  <- sf::st_read(path, quiet = TRUE)
   shp  <- .normalize_crs(shp)
   cols <- tolower(names(shp))
@@ -120,17 +130,20 @@ read_channels_shp <- function(path, dem = NULL) {
   }
   out$elevmin[is.na(out$elevmin)] <- 0.0
   out$elevmax[is.na(out$elevmax)] <- 0.0
-  out
+
+  if (keep_geometry) sf::st_sf(out, geometry = sf::st_geometry(shp)) else out
 }
 
 #' Read a landscape units shapefile and return a data.frame for \code{gis_lsus}
 #'
 #' @param path Path to the shapefile.
 #' @param dem  Optional DEM \code{SpatRaster}.
-#' @return A \code{data.frame} for \code{gis_lsus}.
-#' @importFrom sf st_read st_centroid st_coordinates
+#' @param keep_geometry Logical.  When \code{TRUE} an \code{sf} object is
+#'   returned with WGS84 geometry.  Default \code{FALSE}.
+#' @return A \code{data.frame} (or \code{sf}) for \code{gis_lsus}.
+#' @importFrom sf st_read st_centroid st_coordinates st_sf st_geometry
 #' @export
-read_lsus_shp <- function(path, dem = NULL) {
+read_lsus_shp <- function(path, dem = NULL, keep_geometry = FALSE) {
   shp  <- sf::st_read(path, quiet = TRUE)
   shp  <- .normalize_crs(shp)
   cols <- tolower(names(shp))
@@ -156,7 +169,8 @@ read_lsus_shp <- function(path, dem = NULL) {
     out$elev[is.na(out$elev)] <- ev$mean[is.na(out$elev)]
   }
   out$elev[is.na(out$elev)] <- 0.0
-  out
+
+  if (keep_geometry) sf::st_sf(out, geometry = sf::st_geometry(shp)) else out
 }
 
 #' Read an HRUs shapefile and return a data.frame for \code{gis_hrus}
@@ -167,10 +181,12 @@ read_lsus_shp <- function(path, dem = NULL) {
 #'
 #' @param path Path to the shapefile.
 #' @param dem  Optional DEM \code{SpatRaster}.
-#' @return A \code{data.frame} for \code{gis_hrus}.
-#' @importFrom sf st_read st_centroid st_coordinates
+#' @param keep_geometry Logical.  When \code{TRUE} an \code{sf} object is
+#'   returned with WGS84 geometry.  Default \code{FALSE}.
+#' @return A \code{data.frame} (or \code{sf}) for \code{gis_hrus}.
+#' @importFrom sf st_read st_centroid st_coordinates st_sf st_geometry
 #' @export
-read_hrus_shp <- function(path, dem = NULL) {
+read_hrus_shp <- function(path, dem = NULL, keep_geometry = FALSE) {
   shp  <- sf::st_read(path, quiet = TRUE)
   shp  <- .normalize_crs(shp)
   cols <- tolower(names(shp))
@@ -198,17 +214,20 @@ read_hrus_shp <- function(path, dem = NULL) {
     out$elev[is.na(out$elev)] <- ev$mean[is.na(out$elev)]
   }
   out$elev[is.na(out$elev)] <- 0.0
-  out
+
+  if (keep_geometry) sf::st_sf(out, geometry = sf::st_geometry(shp)) else out
 }
 
 #' Read a water bodies shapefile and return a data.frame for \code{gis_water}
 #'
 #' @param path Path to the shapefile.
 #' @param dem  Optional DEM \code{SpatRaster}.
-#' @return A \code{data.frame} for \code{gis_water}.
-#' @importFrom sf st_read st_centroid st_coordinates
+#' @param keep_geometry Logical.  When \code{TRUE} an \code{sf} object is
+#'   returned with WGS84 geometry.  Default \code{FALSE}.
+#' @return A \code{data.frame} (or \code{sf}) for \code{gis_water}.
+#' @importFrom sf st_read st_centroid st_coordinates st_sf st_geometry
 #' @export
-read_water_shp <- function(path, dem = NULL) {
+read_water_shp <- function(path, dem = NULL, keep_geometry = FALSE) {
   shp  <- sf::st_read(path, quiet = TRUE)
   shp  <- .normalize_crs(shp)
   cols <- tolower(names(shp))
@@ -232,17 +251,20 @@ read_water_shp <- function(path, dem = NULL) {
     out$elev[is.na(out$elev)] <- ev$mean[is.na(out$elev)]
   }
   out$elev[is.na(out$elev)] <- 0.0
-  out
+
+  if (keep_geometry) sf::st_sf(out, geometry = sf::st_geometry(shp)) else out
 }
 
 #' Read a point sources shapefile and return a data.frame for \code{gis_points}
 #'
 #' @param path Path to the shapefile.
 #' @param dem  Optional DEM \code{SpatRaster}.
-#' @return A \code{data.frame} for \code{gis_points}.
-#' @importFrom sf st_read st_coordinates
+#' @param keep_geometry Logical.  When \code{TRUE} an \code{sf} object is
+#'   returned with WGS84 geometry.  Default \code{FALSE}.
+#' @return A \code{data.frame} (or \code{sf}) for \code{gis_points}.
+#' @importFrom sf st_read st_coordinates st_sf st_geometry
 #' @export
-read_points_shp <- function(path, dem = NULL) {
+read_points_shp <- function(path, dem = NULL, keep_geometry = FALSE) {
   shp  <- sf::st_read(path, quiet = TRUE)
   shp  <- .normalize_crs(shp)
   cols <- tolower(names(shp))
@@ -264,7 +286,8 @@ read_points_shp <- function(path, dem = NULL) {
     out$elev[is.na(out$elev)] <- ev[is.na(out$elev)]
   }
   out$elev[is.na(out$elev)] <- 0.0
-  out
+
+  if (keep_geometry) sf::st_sf(out, geometry = sf::st_geometry(shp)) else out
 }
 
 #' Read aquifer shapefiles and return data.frames for the GIS aquifer tables
@@ -474,9 +497,12 @@ write_gis_to_db <- function(con,
 #' @param gis_dir Directory containing the shapefiles.
 #' @param dem_file Optional path to DEM raster (uses
 #'   \code{file.path(gis_dir, "dem.tif")} by default if present).
+#' @param keep_geometry Logical.  When \code{TRUE} the returned list contains
+#'   \code{sf} objects (with WGS84 geometry) instead of plain
+#'   \code{data.frame}s.  Default \code{FALSE}.
 #' @return A named list suitable for passing to \code{\link{write_gis_to_db}}.
 #' @export
-read_swatplus_gis <- function(gis_dir, dem_file = NULL) {
+read_swatplus_gis <- function(gis_dir, dem_file = NULL, keep_geometry = FALSE) {
   f <- function(name) file.path(gis_dir, name)
 
   # Load DEM if available
@@ -490,17 +516,23 @@ read_swatplus_gis <- function(gis_dir, dem_file = NULL) {
   result <- list()
 
   if (file.exists(f("subs1.shp")))
-    result$subbasins <- read_subbasins_shp(f("subs1.shp"), dem = dem)
+    result$subbasins <- read_subbasins_shp(f("subs1.shp"), dem = dem,
+                                           keep_geometry = keep_geometry)
   if (file.exists(f("rivs1.shp")))
-    result$channels  <- read_channels_shp(f("rivs1.shp"),  dem = dem)
+    result$channels  <- read_channels_shp(f("rivs1.shp"),  dem = dem,
+                                          keep_geometry = keep_geometry)
   if (file.exists(f("lsus2.shp")))
-    result$lsus      <- read_lsus_shp(f("lsus2.shp"),      dem = dem)
+    result$lsus      <- read_lsus_shp(f("lsus2.shp"),      dem = dem,
+                                      keep_geometry = keep_geometry)
   if (file.exists(f("hrus1.shp")))
-    result$hrus      <- read_hrus_shp(f("hrus1.shp"),       dem = dem)
+    result$hrus      <- read_hrus_shp(f("hrus1.shp"),       dem = dem,
+                                      keep_geometry = keep_geometry)
   if (file.exists(f("reservoirs.shp")))
-    result$water     <- read_water_shp(f("reservoirs.shp"), dem = dem)
+    result$water     <- read_water_shp(f("reservoirs.shp"), dem = dem,
+                                       keep_geometry = keep_geometry)
   if (file.exists(f("outlets.shp")))
-    result$points    <- read_points_shp(f("outlets.shp"),   dem = dem)
+    result$points    <- read_points_shp(f("outlets.shp"),   dem = dem,
+                                        keep_geometry = keep_geometry)
 
   aqu_path  <- f("aquifers.shp")
   daqu_path <- f("deepaquifers.shp")

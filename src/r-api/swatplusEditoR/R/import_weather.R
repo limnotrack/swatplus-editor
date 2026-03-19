@@ -128,6 +128,18 @@ import_wgn <- function(project_db,
 #' \code{*.pet}) and records them in \code{weather_file} and
 #' \code{weather_sta_cli}.
 #'
+#' SWAT+ weather files are expected to have the following header format:
+#' \preformatted{
+#' <description line>
+#' nbyr     tstep       lat       lon      elev
+#' <nbyr>   <tstep>  <lat>    <lon>   <elev>
+#' <data rows ...>
+#' }
+#' The lat/lon/elev values on line 3 are parsed and stored in
+#' \code{weather_file}.  Weather stations are then created from every unique
+#' \code{(lat, lon)} combination in the file records, mirroring
+#' \code{WeatherImport.create_weather_stations()} in the Python API.
+#'
 #' Mirrors \code{WeatherImport} in \code{src/api/actions/import_weather.py}.
 #'
 #' @param project_db  Path to the project \code{.sqlite} database.
@@ -135,7 +147,7 @@ import_wgn <- function(project_db,
 #' @param format      Weather data format: \code{"observed"} (default) or
 #'   \code{"2012"} (SWAT 2012 style).
 #' @param verbose     Print progress messages.
-#' @return Invisibly, the number of station files found.
+#' @return Invisibly, the number of weather stations created.
 #' @export
 import_weather <- function(project_db,
                            weather_dir,
@@ -152,6 +164,30 @@ import_weather <- function(project_db,
     hmd = "hmd", wnd = "wnd", pet = "pet"
   )
 
+  # Parse a single weather station file to get lat, lon, elev from the
+  # third line (index 2) of the SWAT+ station-file format:
+  #   line 0: description
+  #   line 1: column headers (nbyr  tstep  lat  lon  elev)
+  #   line 2: values
+  .parse_station_header <- function(file_path) {
+    tryCatch({
+      lines <- readLines(file_path, n = 3L, warn = FALSE)
+      if (length(lines) < 3L) return(list(lat = 0.0, lon = 0.0, elev = 0.0))
+      parts <- strsplit(trimws(lines[[3L]]), "\\s+")[[1L]]
+      if (length(parts) >= 4L) {
+        lat  <- suppressWarnings(as.numeric(parts[[3L]]))
+        lon  <- suppressWarnings(as.numeric(parts[[4L]]))
+        elev <- if (length(parts) >= 5L)
+          suppressWarnings(as.numeric(parts[[5L]])) else NA_real_
+        if (is.na(lat) || is.na(lon))
+          return(list(lat = 0.0, lon = 0.0, elev = 0.0))
+        list(lat = lat, lon = lon, elev = if (is.na(elev)) 0.0 else elev)
+      } else {
+        list(lat = 0.0, lon = 0.0, elev = 0.0)
+      }
+    }, error = function(e) list(lat = 0.0, lon = 0.0, elev = 0.0))
+  }
+
   files_found <- list()
   for (type in names(ext_map)) {
     pattern <- paste0("\\.", type, "$")
@@ -166,44 +202,61 @@ import_weather <- function(project_db,
     return(invisible(0L))
   }
 
-  # Record all weather files
+  # Record all weather files, parsing lat/lon/elev from each file's header
   DBI::dbExecute(proj_con, "DELETE FROM weather_file")
   wf_rows <- do.call(rbind, lapply(names(files_found), function(type) {
     fls <- files_found[[type]]
     if (length(fls) == 0L) return(NULL)
-    data.frame(
-      filename = fls,
-      type     = type,
-      lat      = 0.0,
-      lon      = 0.0,
-      stringsAsFactors = FALSE
-    )
+    rows <- lapply(fls, function(fn) {
+      hdr <- .parse_station_header(file.path(weather_dir, fn))
+      data.frame(filename = fn, type = type,
+                 lat = hdr$lat, lon = hdr$lon,
+                 stringsAsFactors = FALSE)
+    })
+    do.call(rbind, rows)
   }))
   if (!is.null(wf_rows) && nrow(wf_rows) > 0L)
     swat_bulk_insert(proj_con, "weather_file", wf_rows)
 
-  # Create weather stations from pcp files (one station per pcp file)
+  # Create weather stations from unique (lat, lon) combinations, matching
+  # the Python WeatherImport.create_weather_stations() logic.
+  unique_coords <- unique(wf_rows[, c("lat", "lon"), drop = FALSE])
   n_sta <- 0L
-  for (pcp_file in files_found$pcp) {
-    sta_name <- tools::file_path_sans_ext(pcp_file)
-    existing <- DBI::dbGetQuery(proj_con,
-      paste0("SELECT id FROM weather_sta_cli WHERE name='", sta_name, "'"))
-    if (nrow(existing) > 0L) next
+  DBI::dbWithTransaction(proj_con, {
+    for (i in seq_len(nrow(unique_coords))) {
+      lat  <- unique_coords$lat[[i]]
+      lon  <- unique_coords$lon[[i]]
+      name <- weather_sta_name(lat, lon)
+      existing <- DBI::dbGetQuery(proj_con,
+        paste0("SELECT id FROM weather_sta_cli WHERE name='", name, "'"))
+      if (nrow(existing) > 0L) next
 
-    DBI::dbExecute(proj_con,
-      "INSERT INTO weather_sta_cli (name, pcp, tmp, slr, hmd, wnd, pet)
-       VALUES (?, ?, ?, ?, ?, ?, ?)",
-      params = list(
-        sta_name,
-        pcp_file,
-        if (tools::file_ext(pcp_file) == "pcp")
-          paste0(sta_name, ".tmp") else NULL,
-        paste0(sta_name, ".slr"),
-        paste0(sta_name, ".hmd"),
-        paste0(sta_name, ".wnd"),
-        paste0(sta_name, ".pet")
-      ))
-    n_sta <- n_sta + 1L
+      DBI::dbExecute(proj_con,
+        "INSERT INTO weather_sta_cli (name, lat, lon) VALUES (?, ?, ?)",
+        params = list(name, lat, lon))
+      n_sta <- n_sta + 1L
+    }
+  })
+
+  # Link each station to its closest file per weather type (mirrors
+  # match_files_to_stations() in the Python API).
+  if (nrow(unique_coords) > 0L && !is.null(wf_rows) && nrow(wf_rows) > 0L) {
+    for (type in names(ext_map)) {
+      type_files <- wf_rows[wf_rows$type == type, , drop = FALSE]
+      if (nrow(type_files) == 0L) next
+      stations <- DBI::dbGetQuery(proj_con,
+        "SELECT id, name, lat, lon FROM weather_sta_cli")
+      if (nrow(stations) == 0L) next
+      for (j in seq_len(nrow(stations))) {
+        sta <- stations[j, ]
+        dists <- (type_files$lat - sta$lat)^2 + (type_files$lon - sta$lon)^2
+        best  <- type_files$filename[[which.min(dists)]]
+        col   <- type
+        DBI::dbExecute(proj_con,
+          paste0("UPDATE weather_sta_cli SET ", col, "=? WHERE id=?"),
+          params = list(best, sta$id))
+      }
+    }
   }
 
   if (verbose)
