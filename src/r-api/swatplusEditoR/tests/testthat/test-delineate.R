@@ -228,10 +228,10 @@ test_that("extdata files are present and readable", {
   skip_if_not_installed("sf")
   skip_if_not_installed("terra")
 
-  dem_path     <- extdata("dem_example.tif")
-  outlet_path  <- extdata("outlet.shp")
-  channels_path <- extdata("channels.shp")
-  subs_path    <- extdata("subbasins.shp")
+  dem_path     <- extdata("dem.tif")
+  outlet_path  <- extdata("outlets.shp")
+  channels_path <- extdata("rivs1.shp")
+  subs_path    <- extdata("subs1.shp")
 
   expect_true(file.exists(dem_path))
   expect_true(file.exists(outlet_path))
@@ -260,12 +260,12 @@ test_that("extdata files are present and readable", {
   expect_gt(nrow(subs), 0L)
 })
 
-test_that(".build_gis_subbasins parses the bundled subbasins.shp correctly", {
+test_that(".build_gis_subbasins parses the bundled subs1.shp correctly", {
   skip_if_not_installed("sf")
   skip_if_not_installed("terra")
 
-  subs_path <- extdata("subbasins.shp")
-  dem_rast  <- terra::rast(extdata("dem_example.tif"))
+  subs_path <- extdata("subs1.shp")
+  dem_rast  <- terra::rast(extdata("dem.tif"))
 
   sub_df <- .build_gis_subbasins(subs_path, dem_rast)
 
@@ -284,13 +284,13 @@ test_that(".build_gis_subbasins parses the bundled subbasins.shp correctly", {
   expect_true(all(sub_df$lon > 165 & sub_df$lon < 179))
 })
 
-test_that(".build_gis_channels parses the bundled channels.shp correctly", {
+test_that(".build_gis_channels parses the bundled rivs1.shp correctly", {
   skip_if_not_installed("sf")
   skip_if_not_installed("terra")
 
-  subs_path <- extdata("subbasins.shp")
-  ch_path   <- extdata("channels.shp")
-  dem_rast  <- terra::rast(extdata("dem_example.tif"))
+  subs_path <- extdata("subs1.shp")
+  ch_path   <- extdata("rivs1.shp")
+  dem_rast  <- terra::rast(extdata("dem.tif"))
 
   # Build sub_df first (needed for drainage area fallback and subbasin mapping)
   sub_df <- .build_gis_subbasins(subs_path, dem_rast)
@@ -317,10 +317,10 @@ test_that(".build_gis_channels parses the bundled channels.shp correctly", {
   expect_true(all(ch_df$midlon > 165 & ch_df$midlon < 179))
 })
 
-test_that(".prepare_outlet handles the bundled outlet.shp", {
+test_that(".prepare_outlet handles the bundled outlets.shp", {
   skip_if_not_installed("sf")
 
-  outlet_path <- extdata("outlet.shp")
+  outlet_path <- extdata("outlets.shp")
   wd <- tempfile("prep_outlet_real_")
   dir.create(wd)
   on.exit(unlink(wd, recursive = TRUE))
@@ -346,6 +346,17 @@ test_that("use_existing_watershed returns a list from an empty dir", {
   # No shapefiles → read_swatplus_gis returns an empty list
   res <- use_existing_watershed(wd, verbose = FALSE)
   expect_type(res, "list")
+})
+
+test_that("use_existing_watershed with example data", {
+  wd <- system.file("extdata", package = "swatplusEditoR")
+  dem_file <- list.files(wd, pattern = "dem\\.tif$", full.names = TRUE)
+  # No shapefiles → read_swatplus_gis returns an empty list
+  res <- use_existing_watershed(wd, dem_file = dem_file)
+  expect_type(res, "list")
+  expect_named(res,
+    c("subbasins", "channels", "lsus", "hrus", "water",
+      "points", "aquifers", "routing"))
 })
 
 # ===========================================================================
@@ -392,8 +403,8 @@ test_that("delineate_watershed runs end-to-end with bundled DEM and outlet", {
   skip_if_not_installed("terra")
   skip_if(!traudem::can_register_taudem(), "TauDEM executables not found")
 
-  dem_path    <- extdata("dem_example.tif")
-  outlet_path <- extdata("outlet.shp")
+  dem_path    <- extdata("dem.tif")
+  outlet_path <- extdata("outlets.shp")
   skip_if(dem_path == "" || outlet_path == "",
           "Bundled example files not found")
 
@@ -439,8 +450,8 @@ test_that("delineate_watershed with channel_threshold produces more channels", {
   skip_if_not_installed("terra")
   skip_if(!traudem::can_register_taudem(), "TauDEM executables not found")
 
-  dem_path    <- extdata("dem_example.tif")
-  outlet_path <- extdata("outlet.shp")
+  dem_path    <- extdata("dem.tif")
+  outlet_path <- extdata("outlets.shp")
   skip_if(dem_path == "" || outlet_path == "",
           "Bundled example files not found")
 
@@ -452,7 +463,7 @@ test_that("delineate_watershed with channel_threshold produces more channels", {
     outlet           = outlet,
     stream_threshold = 500L,
     snap_distance    = 20L,
-    verbose          = FALSE
+    verbose          = TRUE
   )
 
   # Dual-threshold run: more detailed channel network
@@ -462,7 +473,7 @@ test_that("delineate_watershed with channel_threshold produces more channels", {
     stream_threshold  = 500L,
     channel_threshold = 100L,   # finer channel network
     snap_distance     = 20L,
-    verbose           = FALSE
+    verbose           = TRUE
   )
 
   # Dual run should have at least as many channels as single run
@@ -479,8 +490,8 @@ test_that("delineate_watershed writes gis_* tables to project DB", {
   skip_if_not_installed("terra")
   skip_if(!traudem::can_register_taudem(), "TauDEM executables not found")
 
-  dem_path    <- extdata("dem_example.tif")
-  outlet_path <- extdata("outlet.shp")
+  dem_path    <- extdata("dem.tif")
+  outlet_path <- extdata("outlets.shp")
   skip_if(dem_path == "" || outlet_path == "",
           "Bundled example files not found")
 
