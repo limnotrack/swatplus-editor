@@ -152,6 +152,40 @@ test_that(".build_gis_routing produces correct row count and categories", {
   expect_equal(nrow(outlet_row), 1L)
 })
 
+test_that(".build_gis_routing (sourceid, sourcecat) pairs are globally unique", {
+  # Regression test: LSU and CH share integer ID sequences starting at 1, so
+  # sourceid alone is NOT unique — the composite (sourceid, sourcecat) must be.
+  mock <- .make_mock_gis(3L)
+  mock$channels$.linkno   <- c(1L, 2L, 3L)
+  mock$channels$.dslinkno <- c(2L, 3L, -1L)
+  rout <- .build_gis_routing(mock$lsus, mock$channels)
+
+  # Every (sourceid, sourcecat) pair must be unique
+  pairs <- paste(rout$sourceid, rout$sourcecat, sep = "_")
+  expect_equal(length(pairs), length(unique(pairs)))
+
+  # sourceid alone is NOT unique (LSU and CH overlap at 1, 2, 3)
+  expect_lt(length(unique(rout$sourceid)), nrow(rout))
+})
+
+test_that(".build_gis_routing rows can be inserted into gis_routing DB table", {
+  # Ensures the composite PK schema allows LSU + CH rows without constraint error
+  mock <- .make_mock_gis(3L)
+  mock$channels$.linkno   <- c(1L, 2L, 3L)
+  mock$channels$.dslinkno <- c(2L, 3L, -1L)
+  rout <- .build_gis_routing(mock$lsus, mock$channels)
+
+  con <- new_db()
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  DBI::dbExecute(con, "DELETE FROM gis_routing")
+  expect_no_error(
+    swatplusEditoR:::swat_bulk_insert(con, "gis_routing", rout)
+  )
+  n <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM gis_routing")$n
+  expect_equal(n, nrow(rout))
+})
+
 test_that(".build_gis_routing handles all channels routing to outlet", {
   mock <- .make_mock_gis(2L)
   mock$channels$.linkno   <- c(1L, 2L)

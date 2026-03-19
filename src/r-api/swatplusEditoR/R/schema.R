@@ -1182,12 +1182,13 @@ create_project_tables <- function(con) {
 
   .create_table(con, "
     CREATE TABLE IF NOT EXISTS gis_routing (
-      sourceid  INTEGER PRIMARY KEY,
+      sourceid  INTEGER NOT NULL,
       sourcecat TEXT NOT NULL,
       hyd_typ   TEXT,
       sinkid    INTEGER NOT NULL,
       sinkcat   TEXT NOT NULL,
-      percent   REAL NOT NULL
+      percent   REAL NOT NULL,
+      PRIMARY KEY (sourceid, sourcecat)
     )")
 
   .create_table(con, "
