@@ -321,11 +321,20 @@ add_months <- function(sourcedate, months) {
 
 #' Emit a JSON-formatted progress message (mirrors ExecutableApi.emit_progress)
 #'
-#' @param percent Integer 0-100.
-#' @param message Human-readable message string.
+#' @param percent Integer 0-100, or a message string when called with a single
+#'   argument.  Use \code{-1} (or omit when passing only \code{message}) to
+#'   signal indeterminate progress.
+#' @param message Human-readable message string.  Optional when \code{percent}
+#'   is itself a string (single-argument form).
 #' @export
-emit_progress <- function(percent, message) {
-  cat(jsonlite::toJSON(list(percent = percent, message = message),
+emit_progress <- function(percent, message = NULL) {
+  # Allow single-argument form: emit_progress("some message")
+  if (is.null(message)) {
+    message <- as.character(percent)
+    percent <- -1L
+  }
+  cat(jsonlite::toJSON(list(percent = as.integer(round(percent)),
+                            message = as.character(message)),
                        auto_unbox = TRUE), "\n")
   invisible(NULL)
 }

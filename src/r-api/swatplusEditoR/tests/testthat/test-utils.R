@@ -2,6 +2,38 @@ library(swatplusEditoR)
 library(testthat)
 
 # ---------------------------------------------------------------------------
+# emit_progress
+# ---------------------------------------------------------------------------
+
+test_that("emit_progress two-arg form emits JSON with correct percent and message", {
+  out <- capture.output(emit_progress(50L, "half done"))
+  parsed <- jsonlite::fromJSON(out[[1]])
+  expect_equal(parsed$percent,  50L)
+  expect_equal(parsed$message,  "half done")
+})
+
+test_that("emit_progress single-arg form sets percent to -1", {
+  out <- capture.output(emit_progress("status message"))
+  parsed <- jsonlite::fromJSON(out[[1]])
+  expect_equal(parsed$percent,  -1L)
+  expect_equal(parsed$message,  "status message")
+})
+
+test_that("emit_progress rounds non-integer percent to nearest integer", {
+  # e.g., passing 33.7 should become percent=34
+  out <- capture.output(emit_progress(33.7, "third-ish"))
+  parsed <- jsonlite::fromJSON(out[[1]])
+  expect_equal(parsed$percent, 34L)   # round(33.7) = 34
+})
+
+test_that("emit_progress handles 0 and 100", {
+  out0   <- capture.output(emit_progress(0,   "start"))
+  out100 <- capture.output(emit_progress(100, "done"))
+  expect_equal(jsonlite::fromJSON(out0[[1]])$percent,   0L)
+  expect_equal(jsonlite::fromJSON(out100[[1]])$percent, 100L)
+})
+
+# ---------------------------------------------------------------------------
 # is_number
 # ---------------------------------------------------------------------------
 

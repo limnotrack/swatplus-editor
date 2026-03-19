@@ -702,12 +702,12 @@ delineate_watershed <- function(dem,
   # Steps: 9 base + 2 extra when dual-threshold (channel threshold + StreamNet).
   # Note: the gridnet re-run after outlet snapping is a quick internal step
   # and is not counted separately in the progress tracker.
-  n_steps <- if (use_dual_threshold) 11L else 12L
+  n_steps <- if (use_dual_threshold) 11L else 9L
   step_n  <- 0L
   .step <- function(msg) {
     step_n <<- step_n + 1L
     if (verbose)
-      emit_progress(step_n / n_steps,
+      emit_progress(round(step_n / n_steps * 100L),
                     sprintf("Step %d/%d: %s", step_n, n_steps, msg))
   }
 
@@ -950,7 +950,7 @@ delineate_watershed <- function(dem,
   )
 
   if (verbose)
-    emit_progress(12, sprintf(
+    emit_progress(100L, sprintf(
       "Delineation complete: %d subbasin(s), %d channel(s), %d HRU(s).",
       nrow(sub_df), nrow(ch_df), nrow(hru_df)
     ))
@@ -960,7 +960,7 @@ delineate_watershed <- function(dem,
   # -------------------------------------------------------------------------
 
   if (!is.null(project_db)) {
-    if (verbose) emit_progress(13, "Writing GIS tables to project database...")
+    if (verbose) emit_progress("Writing GIS tables to project database...")
     con <- swat_open_db(project_db)
     write_gis_to_db(
       con           = con,
