@@ -1,6 +1,11 @@
 library(swatplusEditoR)
 library(testthat)
 
+# Resolve a path inside the package's inst/extdata directory.
+extdata <- function(file) {
+  system.file("extdata", file, package = "swatplusEditoR")
+}
+
 # ---------------------------------------------------------------------------
 # weather_sta_name
 # ---------------------------------------------------------------------------
@@ -20,6 +25,14 @@ test_that("weather_sta_name handles southern and eastern hemisphere", {
 # ---------------------------------------------------------------------------
 # import_wgn (file-based)
 # ---------------------------------------------------------------------------
+
+test_that("Import weater station data", {
+  weather_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
+  weather_fils <- list.files(weather_dir, full.names = TRUE)
+  prj_file <- tempfile(fileext = ".sqlite")
+  import_weather(project_db = prj_file, weather_dir = weather_dir, 
+                 verbose = FALSE)
+})
 
 test_that("import_wgn imports WGN stations and monthly values", {
   # Create a minimal WGN database
