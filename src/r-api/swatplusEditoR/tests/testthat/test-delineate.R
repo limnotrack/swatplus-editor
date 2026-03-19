@@ -161,6 +161,31 @@ test_that(".build_gis_routing handles all channels routing to outlet", {
   expect_true(all(ch_rows$sinkcat == "X"))
 })
 
+test_that(".vectorise_watershed_raster returns sf with DN column", {
+  skip_if_not_installed("terra")
+  skip_if_not_installed("sf")
+  # Create a tiny synthetic watershed raster (2x2, values 1 and 2)
+  wd <- tempfile("vect_ws_")
+  dir.create(wd)
+  on.exit(unlink(wd, recursive = TRUE))
+  r <- terra::rast(
+    nrows = 4L, ncols = 4L,
+    xmin = 0, xmax = 4, ymin = 0, ymax = 4,
+    crs = "EPSG:32632"
+  )
+  # Left two columns → watershed 1, right two columns → watershed 2
+  terra::values(r) <- rep(c(1L, 1L, 2L, 2L), times = 4L)
+  tmp_rast <- file.path(wd, "wstream.tif")
+  terra::writeRaster(r, tmp_rast, overwrite = TRUE)
+
+  result <- .vectorise_watershed_raster(tmp_rast)
+
+  expect_s3_class(result, "sf")
+  expect_true("DN" %in% names(result))
+  expect_equal(sort(unique(result$DN)), c(1L, 2L))
+  expect_equal(nrow(result), 2L)
+})
+
 # ===========================================================================
 # 2. Real-file tests — use bundled extdata, no TauDEM required
 # ===========================================================================
@@ -306,6 +331,27 @@ test_that("delineate_watershed errors when traudem/TauDEM is not available", {
   )
 })
 
+test_that("delineate_watershed rejects channel_threshold > stream_threshold", {
+  # This validation runs before any TauDEM call, so no TauDEM needed.
+  skip_if(
+    requireNamespace("traudem", quietly = TRUE) &&
+      traudem::can_register_taudem(),
+    "TauDEM available – use full integration test instead"
+  )
+  # When TauDEM is absent the error comes from .check_traudem(), which is fine.
+  # We only test the new validation when traudem is present but executable absent.
+  skip_if_not_installed("traudem")
+  expect_error(
+    delineate_watershed(
+      dem               = "/tmp/fake.tif",
+      outlet            = data.frame(lon = 176.2, lat = -38.1),
+      stream_threshold  = 500L,
+      channel_threshold = 1000L   # invalid: greater than stream_threshold
+    ),
+    "channel_threshold.*<=.*stream_threshold|stream_threshold"
+  )
+})
+
 test_that("delineate_watershed runs end-to-end with bundled DEM and outlet", {
   skip_if_not_installed("traudem")
   skip_if_not_installed("sf")
@@ -351,6 +397,46 @@ test_that("delineate_watershed runs end-to-end with bundled DEM and outlet", {
   expect_true(all(c("sourceid", "sourcecat", "sinkid", "sinkcat") %in%
                     names(res$routing)))
   expect_true("outlet" %in% res$points$ptype)
+})
+
+test_that("delineate_watershed with channel_threshold produces more channels", {
+  skip_if_not_installed("traudem")
+  skip_if_not_installed("sf")
+  skip_if_not_installed("terra")
+  skip_if(!traudem::can_register_taudem(), "TauDEM executables not found")
+
+  dem_path    <- extdata("dem_example.tif")
+  outlet_path <- extdata("outlet.shp")
+  skip_if(dem_path == "" || outlet_path == "",
+          "Bundled example files not found")
+
+  outlet <- sf::st_read(outlet_path, quiet = TRUE)
+
+  # Single-threshold run (stream only)
+  res_single <- delineate_watershed(
+    dem              = dem_path,
+    outlet           = outlet,
+    stream_threshold = 500L,
+    snap_distance    = 20L,
+    verbose          = FALSE
+  )
+
+  # Dual-threshold run: more detailed channel network
+  res_dual <- delineate_watershed(
+    dem               = dem_path,
+    outlet            = outlet,
+    stream_threshold  = 500L,
+    channel_threshold = 100L,   # finer channel network
+    snap_distance     = 20L,
+    verbose           = FALSE
+  )
+
+  # Dual run should have at least as many channels as single run
+  expect_gte(nrow(res_dual$channels), nrow(res_single$channels))
+  # Subbasin count should be the same (same stream threshold defines subbasins)
+  expect_equal(nrow(res_dual$subbasins), nrow(res_single$subbasins))
+  # All channels must be assigned to a valid subbasin
+  expect_true(all(res_dual$channels$subbasin %in% res_dual$subbasins$id))
 })
 
 test_that("delineate_watershed writes gis_* tables to project DB", {

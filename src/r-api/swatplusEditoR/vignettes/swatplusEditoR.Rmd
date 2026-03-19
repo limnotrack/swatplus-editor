@@ -120,25 +120,41 @@ create_project_db("/path/to/project.sqlite")
 
 # Delineate and write directly to the project database
 gis_data <- delineate_watershed(
-  dem              = dem_file,
-  outlet           = outlet,
-  project_db       = "/path/to/project.sqlite",  # optional: write to DB
-  stream_threshold = 1000,   # upstream cells needed to form a stream
-  snap_distance    = 50,     # max cells to move outlet to nearest stream
-  n_processes      = 1L,     # increase if MPI is available
-  verbose          = TRUE
+  dem               = dem_file,
+  outlet            = outlet,
+  project_db        = "/path/to/project.sqlite",  # optional: write to DB
+  stream_threshold  = 1000,  # upstream cells to form a stream (subbasin boundary)
+  channel_threshold = 200,   # optional: finer channel network within subbasins
+  snap_distance     = 50,    # max cells to move outlet to nearest stream
+  n_processes       = 1L,    # increase if MPI is available
+  verbose           = TRUE
 )
 ```
 
-The function runs this TauDEM pipeline internally:
+The function runs this TauDEM pipeline, matching the
+[QSWATPlus](https://github.com/swat-model/QSWATPlus) `delineation.py`
+workflow step-by-step.  The numbered progress counter reports 9 steps (11 in
+dual-threshold mode); the list below includes all pipeline stages:
 
-1. **Pit Remove** — fill sinks in the DEM  
-2. **D8 Flow Directions** — steepest-descent flow routing  
-3. **D8 Contributing Area** (full DEM) — for stream threshold  
-4. **Stream Definition by Threshold** — extract stream network  
-5. **Move Outlets to Streams** — snap outlet to nearest stream cell  
-6. **D8 Contributing Area** (from outlet) — mask to watershed  
-7. **Stream Net** — delineate watershed polygons and labelled stream reaches
+1. **Pit Remove** — fill sinks in the DEM
+2. **D8 Flow Directions** — steepest-descent flow routing
+3. **D8 Contributing Area** (full DEM)
+4. **Grid Network** (`gridnet`) — path lengths (`plen`, `tlen`) and grid order (`gord`)
+5. **Stream Threshold** — define stream source raster at `stream_threshold`
+6. **Channel Threshold** *(optional, counted when `channel_threshold` is set)* — finer network at `channel_threshold`
+7. **Move Outlets to Streams** — snap outlet to nearest channel cell
+8. **D8 Contributing Area** (outlet-bounded)
+9. **Grid Network** (outlet-bounded re-run, not a separate counted step)
+10. **Stream Threshold** (outlet-bounded area)
+11. **Channel Threshold** (outlet-bounded) *(optional)*
+12. **StreamNet** — watershed raster + stream network shapefile
+13. **StreamNet** (channel network) *(optional, when `channel_threshold` is set)*
+14. Polygonise watershed raster → subbasin polygons (as `createWatershedShapefile()` in QSWATPlus)
+
+The `stream_threshold` controls the **subbasin** boundaries; setting
+`channel_threshold` to a smaller value adds a more detailed **channel** network
+inside each subbasin — exactly how QSWATPlus uses its `numCellsSt` (stream)
+and `numCellsCh` (channel) threshold parameters.
 
 The returned `gis_data` list contains data.frames for all `gis_*` tables.
 Simple HRUs (one per landscape unit, placeholder land-use `"AGRL"` and soil
@@ -156,9 +172,18 @@ gis_data <- delineate_watershed(
   keep_work_dir = TRUE,      # don't delete intermediates
   verbose       = TRUE
 )
-# workspace now contains: DEM.tif, DEMfel.tif, p.tif, sd8.tif,
-#   ad8.tif, src.tif, outlet.shp, movedoutlet.shp,
-#   ord.tif, tree.dat, coord.dat, net.shp, watershed.shp
+# workspace now contains (traudem-derived names for some, explicit for others):
+#   DEM.tif, DEMfel.tif                         <- pit remove
+#   DEMp.tif, DEMsd8.tif                        <- d8flowdir (traudem names)
+#   DEMad8.tif                                  <- aread8 (traudem names)
+#   gord.tif, plen.tif, tlen.tif                <- gridnet
+#   src_stream.tif, src_channel.tif             <- threshold (full DEM)
+#   outlet.shp, DEMad8movedoutlet.shp           <- moveoutletstostreams
+#   src_stream_final.tif, src_channel_final.tif <- threshold (outlet-bounded)
+#   ord_stream.tif, tree_stream.dat, coord_stream.dat,
+#   net_stream.shp, wstream.tif                 <- streamnet (streams)
+#   net_channel.shp, wchannel.tif               <- streamnet (channels, if dual)
+#   watershed.shp                               <- polygonised subbasins
 ```
 
 ---

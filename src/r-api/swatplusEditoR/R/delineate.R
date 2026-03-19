@@ -437,6 +437,77 @@ NULL
   )
 }
 
+# Vectorise a TauDEM watershed raster (from streamnet -w) to a polygon sf.
+# TauDEM 5.3 writes -w as a GeoTIFF grid; we polygonise it here exactly as
+# QSWATPlus does (createWatershedShapefile in delineation.py).
+# Returns an sf data.frame with a "DN" column matching the raster values.
+.vectorise_watershed_raster <- function(raster_file) {
+  r <- terra::rast(raster_file)
+  # Zero and negative values are no-data in TauDEM watershed grids
+  r[r <= 0] <- NA
+  vect_obj <- terra::as.polygons(r, dissolve = TRUE)
+  # Rename the value column to "DN" so .build_gis_subbasins can find it
+  names(vect_obj)[1] <- "DN"
+  sf::st_as_sf(vect_obj)
+}
+
+# For dual-threshold mode: assign each detailed channel to the stream-scale
+# subbasin whose polygon contains (or is nearest to) the channel midpoint.
+# Returns an integer vector of subbasin ids, one per row of the channel network.
+.assign_channels_to_subbasins <- function(channel_net_file, subbasin_sf) {
+  ch_net <- sf::st_read(channel_net_file, quiet = TRUE)
+  if (!tryCatch(sf::st_crs(ch_net) == sf::st_crs(subbasin_sf),
+                error = function(e) FALSE)) {
+    subbasin_sf <- sf::st_transform(subbasin_sf, sf::st_crs(ch_net))
+  }
+  # Use the midpoint of each channel reach for spatial lookup
+  mids <- sf::st_point_on_surface(sf::st_geometry(ch_net))
+  # Try st_within first (exact containment), fall back to nearest feature
+  within_idx <- suppressWarnings(
+    as.integer(unlist(sf::st_within(mids, subbasin_sf)))
+  )
+  nearest_idx <- sf::st_nearest_feature(mids, subbasin_sf)
+  idx <- ifelse(is.na(within_idx), nearest_idx, within_idx)
+  as.integer(idx)
+}
+
+# Run a TauDEM gridnet command via taudem_exec, writing outputs to explicit
+# file paths.  Called both without and with an outlet file (as QSWATPlus does).
+.run_gridnet <- function(flowdir_file, gord_file, plen_file, tlen_file,
+                         outlet_file = NULL, n_processes = 1L, verbose = FALSE) {
+  args <- c("-p",    flowdir_file,
+            "-plen", plen_file,
+            "-tlen", tlen_file,
+            "-gord", gord_file)
+  if (!is.null(outlet_file))
+    args <- c(args, "-o", outlet_file)
+  traudem::taudem_exec(
+    n_processes = n_processes,
+    program     = "gridnet",
+    args        = args,
+    quiet       = !verbose
+  )
+  invisible(NULL)
+}
+
+# Run a TauDEM threshold command via taudem_exec with an explicit output path.
+# (We use taudem_exec instead of taudem_threshold so that both stream- and
+# channel-threshold files can coexist without overwriting each other.)
+.run_threshold <- function(ad8_file, src_file, threshold,
+                           n_processes = 1L, verbose = FALSE) {
+  traudem::taudem_exec(
+    n_processes = n_processes,
+    program     = "threshold",
+    args        = c("-ssa",    ad8_file,
+                    "-thresh", as.character(threshold),
+                    "-src",    src_file),
+    quiet       = !verbose
+  )
+  if (!file.exists(src_file))
+    stop("TauDEM threshold did not create: ", src_file, call. = FALSE)
+  invisible(src_file)
+}
+
 # Set project_config.delineation_done = TRUE (and store gis_type/version).
 .update_delineation_config <- function(project_db,
                                        gis_type    = "r-taudem",
@@ -475,30 +546,62 @@ NULL
 #' model (DEM) and one or more outlet points, producing all \code{gis_*} tables
 #' required by \code{\link{import_gis}}.  This mirrors the
 #' \strong{"Delineate watershed"} option in the SWAT+ Editor GUI, which
-#' normally delegates this step to QSWAT+ in QGIS using TauDEM.
+#' normally delegates this step to
+#' \href{https://github.com/swat-model/QSWATPlus}{QSWAT+} in QGIS using TauDEM.
 #'
 #' @details
-#' The function executes the following TauDEM steps in order:
+#' The function executes the following TauDEM steps in order, matching the
+#' pipeline used by QSWATPlus (\code{delineation.py / TauDEMUtils.py}):
 #' \enumerate{
-#'   \item \strong{Pit Remove} (\code{taudem_pitremove}) — fills sinks/pits in
+#'   \item \strong{Pit Remove} (\code{pitremove}) — fills sinks/pits in
 #'     the DEM to ensure continuous flow paths.
-#'   \item \strong{D8 Flow Directions} (\code{taudem_d8flowdir}) — computes
+#'   \item \strong{D8 Flow Directions} (\code{d8flowdir}) — computes
 #'     steepest-descent flow directions and D8 slopes.
-#'   \item \strong{D8 Contributing Area — full DEM} (\code{taudem_aread8}) —
+#'   \item \strong{D8 Contributing Area — full DEM} (\code{aread8}) —
 #'     accumulates upstream contributing area across the entire DEM.
-#'   \item \strong{Stream Definition by Threshold} (\code{taudem_threshold}) —
-#'     defines the stream network from cells whose contributing area equals or
-#'     exceeds \code{stream_threshold}.
-#'   \item \strong{Move Outlets to Streams} (\code{taudem_moveoutletstostream})
-#'     — snaps the supplied outlet point(s) to the nearest stream cell within
-#'     \code{snap_distance} cells.
-#'   \item \strong{D8 Contributing Area — from outlet} (\code{taudem_aread8})
-#'     — re-accumulates contributing area bounded by the snapped outlet,
+#'   \item \strong{Grid Network} (\code{gridnet}) — computes upstream path
+#'     lengths (\code{plen}, \code{tlen}) and Strahler-like grid order
+#'     (\code{gord}) for the full DEM.  QSWATPlus always runs this step.
+#'   \item \strong{Stream Source Threshold} (\code{threshold}) — defines the
+#'     stream network from cells whose contributing area equals or exceeds
+#'     \code{stream_threshold}.
+#'   \item \strong{Channel Source Threshold} (\code{threshold}, optional) —
+#'     if \code{channel_threshold < stream_threshold}, defines a more detailed
+#'     channel network at the lower threshold; otherwise skipped.
+#'   \item \strong{Move Outlets to Streams} (\code{moveoutletstostreams}) —
+#'     snaps the supplied outlet point(s) to the nearest channel cell within
+#'     \code{snap_distance} cells.  Snapping uses the channel network (finer
+#'     detail), matching QSWATPlus behaviour.
+#'   \item \strong{D8 Contributing Area — from outlet} (\code{aread8}) —
+#'     re-accumulates contributing area bounded by the snapped outlet,
 #'     masking areas outside the watershed.
-#'   \item \strong{Stream Net} (\code{taudem_exec("streamnet", ...)}) —
-#'     delineates the watershed polygon(s) and labelled stream-reach network,
-#'     including Strahler order, length, slope, and total drainage area.
+#'   \item \strong{Grid Network — with outlet} (\code{gridnet}) — repeats
+#'     step 4 with the snapped outlet so that path lengths are bounded by the
+#'     watershed extent (QSWATPlus re-runs gridnet after outlet snapping).
+#'   \item \strong{Stream Threshold — outlet-bounded} (\code{threshold}) —
+#'     re-defines the stream source raster using the outlet-bounded
+#'     contributing area (QSWATPlus re-runs threshold after outlet snapping).
+#'   \item \strong{Channel Threshold — outlet-bounded} (\code{threshold},
+#'     optional) — same as above at \code{channel_threshold} when dual-
+#'     threshold mode is active.
+#'   \item \strong{StreamNet — stream network} (\code{streamnet}) —
+#'     delineates watershed polygons and labelled stream-reach network at the
+#'     stream threshold, including Strahler order, length, slope, and total
+#'     drainage area.  The \code{-w} output is a GeoTIFF watershed grid
+#'     (TauDEM 5.3 format) which is subsequently polygonised to subbasin
+#'     boundaries.
+#'   \item \strong{StreamNet — channel network} (\code{streamnet}, optional) —
+#'     when \code{channel_threshold < stream_threshold}, runs a second
+#'     StreamNet at the lower threshold to produce detailed channel reaches
+#'     used for \code{gis_channels}.  This mirrors QSWATPlus's dual-run
+#'     approach (\code{wStreamFile} for subbasins,
+#'     \code{channelFile} for channels).
 #' }
+#'
+#' After running TauDEM, the watershed raster (\code{-w} output) is
+#' polygonised using \code{terra::as.polygons()} to create subbasin polygon
+#' boundaries, replicating QSWATPlus's \code{createWatershedShapefile()}
+#' raster-to-vector step.
 #'
 #' Subbasin statistics (area, mean slope, centroid coordinates, elevation) are
 #' derived from the DEM and the watershed polygons.  Channel geometry (width,
@@ -525,19 +628,28 @@ NULL
 #'   provided, the delineated \code{gis_*} tables are written to the database
 #'   and \code{project_config.delineation_done} is set to \code{TRUE}.
 #' @param stream_threshold Minimum number of upstream grid cells required to
-#'   initiate a stream (passed to \code{\link[traudem]{taudem_threshold}} as
-#'   \code{threshold_parameter}).  Larger values produce fewer, longer reaches.
-#'   Default \code{1000}.
+#'   initiate a stream (passed to TauDEM \code{threshold} as \code{-thresh}).
+#'   This threshold defines the \strong{subbasin} boundaries.
+#'   Larger values produce fewer, larger subbasins.  Default \code{1000}.
+#' @param channel_threshold Minimum number of upstream grid cells for a
+#'   \strong{channel} reach within each subbasin.  Must be
+#'   \code{<= stream_threshold}.  When \code{NULL} (default) or equal to
+#'   \code{stream_threshold}, a single threshold is used (one channel per
+#'   subbasin, same as the previous behaviour).  When set to a smaller value,
+#'   a second TauDEM StreamNet run is performed at this finer threshold,
+#'   matching QSWATPlus's dual-threshold approach where
+#'   \code{numCellsSt} (stream) and \code{numCellsCh} (channel) can differ.
 #' @param snap_distance Maximum number of grid cells to traverse when moving
 #'   the outlet to the nearest stream cell (passed as \code{-md} to
-#'   \code{\link[traudem]{taudem_moveoutletstostream}}).  Default \code{50}.
+#'   \code{moveoutletstostreams}).  Default \code{50}.
 #' @param n_processes Number of MPI processes for TauDEM.  Default \code{1}.
 #'   Increase for large DEMs if MPI is available.
 #' @param work_dir Directory where TauDEM intermediate files are written.
 #'   Defaults to a temporary directory that is removed on exit unless
 #'   \code{keep_work_dir = TRUE}.
 #' @param keep_work_dir If \code{TRUE}, \code{work_dir} is retained after the
-#'   function returns, allowing inspection of all TauDEM intermediate outputs.
+#'   function returns, allowing inspection of all TauDEM intermediate outputs
+#'   (watershed raster, path-length grids, grid-order grid, etc.).
 #'   Default \code{FALSE}.
 #' @param verbose Print progress messages.  Default \code{TRUE}.
 #'
@@ -556,18 +668,27 @@ NULL
 #'
 #' @seealso \code{\link{use_existing_watershed}},
 #'   \code{\link{write_gis_to_db}}, \code{\link{setup_project}},
-#'   \code{\link[traudem]{taudem_pitremove}}
+#'   \href{https://github.com/swat-model/QSWATPlus}{QSWATPlus source} for the
+#'   Python pipeline this function replicates.
 #' @export
 delineate_watershed <- function(dem,
                                 outlet,
-                                project_db       = NULL,
-                                stream_threshold = 1000,
-                                snap_distance    = 50,
-                                n_processes      = 1L,
-                                work_dir         = NULL,
-                                keep_work_dir    = FALSE,
-                                verbose          = TRUE) {
+                                project_db        = NULL,
+                                stream_threshold  = 1000,
+                                channel_threshold = NULL,
+                                snap_distance     = 50,
+                                n_processes       = 1L,
+                                work_dir          = NULL,
+                                keep_work_dir     = FALSE,
+                                verbose           = TRUE) {
   .check_traudem()
+
+  # --- Channel threshold defaults to stream threshold -----------------------
+  if (is.null(channel_threshold))
+    channel_threshold <- stream_threshold
+  if (channel_threshold > stream_threshold)
+    stop("'channel_threshold' must be <= 'stream_threshold'.", call. = FALSE)
+  use_dual_threshold <- isTRUE(channel_threshold < stream_threshold)
 
   # --- Working directory ---------------------------------------------------
   own_dir <- is.null(work_dir)
@@ -576,6 +697,18 @@ delineate_watershed <- function(dem,
     dir.create(work_dir, recursive = TRUE)
     if (!keep_work_dir)
       on.exit(unlink(work_dir, recursive = TRUE), add = TRUE)
+  }
+
+  # Steps: 9 base + 2 extra when dual-threshold (channel threshold + StreamNet).
+  # Note: the gridnet re-run after outlet snapping is a quick internal step
+  # and is not counted separately in the progress tracker.
+  n_steps <- if (use_dual_threshold) 11L else 9L
+  step_n  <- 0L
+  .step <- function(msg) {
+    step_n <<- step_n + 1L
+    if (verbose)
+      emit_progress(step_n / n_steps,
+                    sprintf("Step %d/%d: %s", step_n, n_steps, msg))
   }
 
   if (verbose) emit_progress(0, "Preparing DEM and outlet...")
@@ -588,49 +721,102 @@ delineate_watershed <- function(dem,
   outlet_info <- .prepare_outlet(outlet, crs_proj, work_dir)
 
   # -------------------------------------------------------------------------
-  # TauDEM pipeline
+  # TauDEM pipeline — mirrors QSWATPlus delineation.py / TauDEMUtils.py
   # -------------------------------------------------------------------------
 
-  if (verbose) emit_progress(1/7, "Step 1/7: Pit Remove...")
+  .step("Pit Remove (fill sinks)...")
   dem_fel <- traudem::taudem_pitremove(dem_file, quiet = !verbose)
 
-  if (verbose) emit_progress(2/7, "Step 2/7: D8 Flow Directions...")
+  .step("D8 Flow Directions...")
   flow_out     <- traudem::taudem_d8flowdir(dem_fel, quiet = !verbose)
   flowdir_file <- flow_out$output_d8flowdir_grid
 
-  if (verbose) emit_progress(3/7, "Step 3/7: D8 Contributing Area (full DEM)...")
+  .step("D8 Contributing Area (full DEM)...")
   ad8_full <- traudem::taudem_aread8(flowdir_file, quiet = !verbose)
 
-  if (verbose) emit_progress(4/7, "Step 4/7: Stream Definition by Threshold...")
-  src_file <- traudem::taudem_threshold(
-    ad8_full,
-    threshold_parameter = stream_threshold,
-    quiet               = !verbose
-  )
+  # --- Grid Network (QSWATPlus always runs this after AreaD8) ---------------
+  # Computes path lengths (plen, tlen) and grid order (gord).
+  gord_file <- file.path(work_dir, "gord.tif")
+  plen_file <- file.path(work_dir, "plen.tif")
+  tlen_file <- file.path(work_dir, "tlen.tif")
+  .step("Grid Network (path lengths + stream order)...")
+  .run_gridnet(flowdir_file, gord_file, plen_file, tlen_file,
+               outlet_file = NULL, n_processes = n_processes, verbose = verbose)
 
-  if (verbose) emit_progress(5/7, "Step 5/7: Moving outlet to nearest stream...")
+  # --- Stream / channel source thresholds -----------------------------------
+  src_stream_file  <- file.path(work_dir, "src_stream.tif")
+  .step(sprintf("Stream threshold (%d cells, full DEM)...",
+                stream_threshold))
+  .run_threshold(ad8_full, src_stream_file, stream_threshold,
+                 n_processes = n_processes, verbose = verbose)
+
+  if (use_dual_threshold) {
+    src_channel_file <- file.path(work_dir, "src_channel.tif")
+    .step(sprintf("Channel threshold (%d cells, full DEM)...",
+                  channel_threshold))
+    .run_threshold(ad8_full, src_channel_file, channel_threshold,
+                   n_processes = n_processes, verbose = verbose)
+  } else {
+    src_channel_file <- src_stream_file
+  }
+
+  # --- Move outlet(s) to nearest channel cell (snap) ------------------------
+  # QSWATPlus snaps to the channel (finer) network, not the stream network.
+  .step("Move outlet(s) to nearest stream...")
   outlet_snapped <- traudem::taudem_moveoutletstostream(
     input_d8flowdir_grid     = flowdir_file,
-    input_stream_raster_grid = src_file,
+    input_stream_raster_grid = src_channel_file,
     outlet_file              = outlet_info$file,
     max_dist                 = snap_distance,
     quiet                    = !verbose
   )
 
-  if (verbose) emit_progress(6/7, "Step 6/7: D8 Contributing Area (from outlet)...")
+  # --- D8 Contributing Area — outlet-bounded --------------------------------
+  .step("D8 Contributing Area (outlet-bounded)...")
   ad8_outlet <- traudem::taudem_aread8(
     flowdir_file,
     outlet_file = outlet_snapped,
     quiet       = !verbose
   )
 
-  if (verbose) emit_progress(7/7, "Step 7/7: Stream Net (stream network + watershed polygons)...")
-  net_file       <- file.path(work_dir, "net.shp")
-  watershed_file <- file.path(work_dir, "watershed.shp")
-  order_file     <- file.path(work_dir, "ord.tif")
-  tree_file      <- file.path(work_dir, "tree.dat")
-  coord_file     <- file.path(work_dir, "coord.dat")
+  # --- Grid Network re-run with outlet (QSWATPlus repeats this step) --------
+  # Overwrites gord/plen/tlen with outlet-bounded values.  Not counted as a
+  # separate progress step (fast, internal) but logged when verbose = TRUE.
+  if (verbose)
+    emit_progress("Grid Network (outlet-bounded, re-run)...")
+  .run_gridnet(flowdir_file, gord_file, plen_file, tlen_file,
+               outlet_file = outlet_snapped,
+               n_processes = n_processes, verbose = verbose)
 
+  # --- Re-run thresholds with outlet-bounded area ---------------------------
+  # QSWATPlus re-runs threshold after the outlet-bounded AreaD8 so that the
+  # stream network used in StreamNet is bounded by the watershed extent.
+  src_stream_final  <- file.path(work_dir, "src_stream_final.tif")
+  .step(sprintf("Stream threshold (%d cells, outlet-bounded)...",
+                stream_threshold))
+  .run_threshold(ad8_outlet, src_stream_final, stream_threshold,
+                 n_processes = n_processes, verbose = verbose)
+
+  if (use_dual_threshold) {
+    src_channel_final <- file.path(work_dir, "src_channel_final.tif")
+    .step(sprintf("Channel threshold (%d cells, outlet-bounded)...",
+                  channel_threshold))
+    .run_threshold(ad8_outlet, src_channel_final, channel_threshold,
+                   n_processes = n_processes, verbose = verbose)
+  } else {
+    src_channel_final <- src_stream_final
+  }
+
+  # --- StreamNet — stream network + watershed raster ------------------------
+  # TauDEM 5.3 writes -w as a GeoTIFF raster grid (not a shapefile).
+  # QSWATPlus uses wStreamFile = demBase + 'wStream' + '.tif'.
+  net_stream_file   <- file.path(work_dir, "net_stream.shp")
+  wstream_file      <- file.path(work_dir, "wstream.tif")
+  ord_stream_file   <- file.path(work_dir, "ord_stream.tif")
+  tree_stream_file  <- file.path(work_dir, "tree_stream.dat")
+  coord_stream_file <- file.path(work_dir, "coord_stream.dat")
+
+  .step("StreamNet (stream network + watershed delineation)...")
   traudem::taudem_exec(
     n_processes = n_processes,
     program     = "streamnet",
@@ -638,23 +824,72 @@ delineate_watershed <- function(dem,
       "-fel",   dem_fel,
       "-p",     flowdir_file,
       "-ad8",   ad8_outlet,
-      "-src",   src_file,
+      "-src",   src_stream_final,
       "-o",     outlet_snapped,
-      "-ord",   order_file,
-      "-tree",  tree_file,
-      "-coord", coord_file,
-      "-net",   net_file,
-      "-w",     watershed_file
+      "-ord",   ord_stream_file,
+      "-tree",  tree_stream_file,
+      "-coord", coord_stream_file,
+      "-net",   net_stream_file,
+      "-w",     wstream_file
     ),
     quiet = !verbose
   )
 
-  if (!file.exists(net_file) || !file.exists(watershed_file))
-    stop(
-      "TauDEM streamnet did not produce expected output files. ",
-      "Check TauDEM messages above for details.",
-      call. = FALSE
+  if (!file.exists(wstream_file))
+    stop("TauDEM streamnet did not produce the watershed raster (",
+         wstream_file, "). Check TauDEM messages above.", call. = FALSE)
+  if (!file.exists(net_stream_file))
+    stop("TauDEM streamnet did not produce the stream network (",
+         net_stream_file, "). Check TauDEM messages above.", call. = FALSE)
+
+  # --- StreamNet — channel network (dual-threshold only) --------------------
+  # Mirrors QSWATPlus's second StreamNet run with the channel threshold to
+  # produce a more detailed channel network (channelFile, wChannelFile).
+  if (use_dual_threshold) {
+    net_channel_file   <- file.path(work_dir, "net_channel.shp")
+    wchannel_file      <- file.path(work_dir, "wchannel.tif")
+    ord_channel_file   <- file.path(work_dir, "ord_channel.tif")
+    tree_channel_file  <- file.path(work_dir, "tree_channel.dat")
+    coord_channel_file <- file.path(work_dir, "coord_channel.dat")
+
+    .step("StreamNet (detailed channel network)...")
+    traudem::taudem_exec(
+      n_processes = n_processes,
+      program     = "streamnet",
+      args        = c(
+        "-fel",   dem_fel,
+        "-p",     flowdir_file,
+        "-ad8",   ad8_outlet,
+        "-src",   src_channel_final,
+        "-o",     outlet_snapped,
+        "-ord",   ord_channel_file,
+        "-tree",  tree_channel_file,
+        "-coord", coord_channel_file,
+        "-net",   net_channel_file,
+        "-w",     wchannel_file
+      ),
+      quiet = !verbose
     )
+
+    if (!file.exists(net_channel_file))
+      stop("TauDEM streamnet (channel) did not produce the channel network (",
+           net_channel_file, "). Check TauDEM messages above.", call. = FALSE)
+  }
+
+  # -------------------------------------------------------------------------
+  # Polygonise watershed raster → subbasin polygon sf
+  # TauDEM 5.3 -w output is a raster grid; convert to vector polygons here,
+  # replicating QSWATPlus's createWatershedShapefile() step.
+  # -------------------------------------------------------------------------
+  if (verbose) emit_progress("Polygonising watershed raster to subbasin polygons...")
+
+  watershed_sf  <- .vectorise_watershed_raster(wstream_file)
+  watershed_shp <- file.path(work_dir, "watershed.shp")
+  sf::st_write(watershed_sf, watershed_shp, quiet = TRUE, delete_dsn = TRUE)
+
+  # Channel network shapefile: use channel-threshold net for dual mode,
+  # stream-threshold net otherwise (one channel per subbasin).
+  channel_net_file <- if (use_dual_threshold) net_channel_file else net_stream_file
 
   # -------------------------------------------------------------------------
   # Parse TauDEM outputs → gis_* data.frames
@@ -662,12 +897,23 @@ delineate_watershed <- function(dem,
 
   if (verbose) emit_progress("Parsing delineation results into SWAT+ GIS tables...")
 
-  sub_df  <- .build_gis_subbasins(watershed_file, dem_rast)
-  ch_df   <- .build_gis_channels(net_file, sub_df, dem_rast)
+  sub_df <- .build_gis_subbasins(watershed_shp, dem_rast)
+  ch_df  <- .build_gis_channels(channel_net_file, sub_df, dem_rast)
+
+  # In dual-threshold mode the channel WSNO values come from the finer network
+  # and do not map to the stream-scale subbasin ids.  Re-assign via spatial
+  # containment of the channel midpoint — the same logic QSWATPlus uses when
+  # calling addBasinsToChannelFile().
+  if (use_dual_threshold) {
+    ch_df$subbasin <- .assign_channels_to_subbasins(channel_net_file,
+                                                    watershed_sf)
+    ch_df$subbasin[is.na(ch_df$subbasin)] <- 1L
+  }
+
   lsu_df  <- .build_gis_lsus(sub_df, ch_df)
   hru_df  <- .build_gis_hrus_simple(lsu_df)
   rout_df <- .build_gis_routing(lsu_df, ch_df)
-  pts_df  <- .build_gis_points(outlet_snapped, watershed_file, dem_rast)
+  pts_df  <- .build_gis_points(outlet_snapped, watershed_shp, dem_rast)
 
   # Remove internal helper columns before returning / inserting
   sub_df$.wsno    <- NULL
