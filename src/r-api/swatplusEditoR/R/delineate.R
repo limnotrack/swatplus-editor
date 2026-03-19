@@ -462,13 +462,20 @@ NULL
   }
   # Use the midpoint of each channel reach for spatial lookup
   mids <- sf::st_point_on_surface(sf::st_geometry(ch_net))
+  
   # Try st_within first (exact containment), fall back to nearest feature
-  within_idx <- suppressWarnings(
-    as.integer(unlist(sf::st_within(mids, subbasin_sf)))
-  )
-  nearest_idx <- sf::st_nearest_feature(mids, subbasin_sf)
-  idx <- ifelse(is.na(within_idx), nearest_idx, within_idx)
-  as.integer(idx)
+  # Option 1: Keep the sparse list, then fill gaps with nearest feature
+  within_list <- sf::st_within(mids, subbasin_sf)
+  
+  idx <- vapply(seq_along(within_list), function(i) {
+    if (length(within_list[[i]]) > 0) {
+      within_list[[i]][1]                          # point is inside a polygon
+    } else {
+      sf::st_nearest_feature(mids[i], subbasin_sf) # fall back to nearest
+    }
+  }, integer(1))
+  
+  return(idx)
 }
 
 # Run a TauDEM gridnet command via taudem_exec, writing outputs to explicit
@@ -702,7 +709,7 @@ delineate_watershed <- function(dem,
   # Steps: 9 base + 2 extra when dual-threshold (channel threshold + StreamNet).
   # Note: the gridnet re-run after outlet snapping is a quick internal step
   # and is not counted separately in the progress tracker.
-  n_steps <- if (use_dual_threshold) 11L else 9L
+  n_steps <- if (use_dual_threshold) 15L else 12L
   step_n  <- 0L
   .step <- function(msg) {
     step_n <<- step_n + 1L
@@ -744,7 +751,8 @@ delineate_watershed <- function(dem,
   traudem::taudem_exec(
     # n_processes = n_processes,
     program     = "aread8",
-    args        = c("-p", flowdir_file, "-ad8", ad8_full, "-nc")
+    args        = c("-p", flowdir_file, "-ad8", ad8_full, "-nc"),
+    quiet = !verbose
   )
   # ad8_full <- traudem::taudem_aread8(flowdir_file, quiet = !verbose)
   # ad8 <- terra::rast(ad8_full)
@@ -924,7 +932,7 @@ delineate_watershed <- function(dem,
   # calling addBasinsToChannelFile().
   if (use_dual_threshold) {
     ch_df$subbasin <- .assign_channels_to_subbasins(channel_net_file,
-                                                    watershed_sf)
+                                                    subbasin_sf = watershed_sf)
     ch_df$subbasin[is.na(ch_df$subbasin)] <- 1L
   }
 
