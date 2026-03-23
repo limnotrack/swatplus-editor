@@ -450,6 +450,20 @@ NULL
   r <- terra::rast(raster_file)
   # Zero and negative values are no-data in TauDEM watershed grids
   r[r <= 0] <- NA
+  # Fill isolated NA cells (e.g. stream-channel confluence cells that TauDEM
+  # labels 0) with the modal value of their neighbours.  Without this step,
+  # thin strips of NA produce visible "gaps" along channel centrelines when the
+  # raster is polygonised.
+  # na.policy = "only"  → only update NA cells, leave others unchanged.
+  # na.rm     = TRUE    → ignore NA cells in the 3×3 window when computing
+  #                        the modal value (so that boundary cells can be
+  #                        filled by their non-NA neighbours).
+  if (anyNA(terra::values(r, mat = FALSE))) {
+    r_filled <- terra::focal(r, w = 3, fun = "modal",
+                             na.policy = "only", na.rm = TRUE)
+    r_filled[r_filled <= 0] <- NA
+    r <- r_filled
+  }
   vect_obj <- terra::as.polygons(r, dissolve = TRUE)
   # Rename the value column to "DN" so .build_gis_subbasins can find it
   names(vect_obj)[1] <- "DN"
@@ -687,8 +701,24 @@ NULL
 #'   \code{hrus}, \code{points}) are returned as \code{sf} objects (WGS84),
 #'   allowing direct use with \pkg{sf} and \pkg{ggplot2}.  Set to \code{FALSE}
 #'   to get bare \code{data.frame}s (previous behaviour).
+#' @param landuse Optional \code{terra::SpatRaster} or file path to a land-use
+#'   raster.  When provided (together with \code{soil}),
+#'   \code{\link{delineate_hrus}} is called automatically to replace the
+#'   placeholder HRU table with real land-use × soil × slope HRUs.
+#' @param soil Optional \code{terra::SpatRaster} or file path to a soils
+#'   raster.  Used together with \code{landuse}.
+#' @param landuse_lookup Named character vector mapping integer raster values
+#'   to SWAT+ land-use codes (see \code{\link{delineate_hrus}}).
+#' @param soil_lookup Named character vector mapping raster values to SWAT+
+#'   soil names (see \code{\link{delineate_hrus}}).
+#' @param slope_thresholds Numeric vector of slope (\%) break-points defining
+#'   slope classes (see \code{\link{delineate_hrus}}).  Default
+#'   \code{c(2, 8, 25, 9999)}.
+#' @param hru_threshold Minimum fractional area (0-1) for retaining an HRU
+#'   (see \code{\link{delineate_hrus}}).  Default \code{0.02}.
 #'
 #' @seealso \code{\link{use_existing_watershed}},
+#'   \code{\link{delineate_hrus}},
 #'   \code{\link{write_gis_to_db}}, \code{\link{setup_project}},
 #'   \href{https://github.com/swat-model/QSWATPlus}{QSWATPlus source} for the
 #'   Python pipeline this function replicates.
@@ -703,6 +733,12 @@ delineate_watershed <- function(dem,
                                 work_dir          = NULL,
                                 keep_work_dir     = FALSE,
                                 return_sf         = TRUE,
+                                landuse           = NULL,
+                                soil              = NULL,
+                                landuse_lookup    = NULL,
+                                soil_lookup       = NULL,
+                                slope_thresholds  = c(2, 8, 25, 9999),
+                                hru_threshold     = 0.02,
                                 verbose           = TRUE) {
   .check_traudem()
 
@@ -1000,10 +1036,42 @@ delineate_watershed <- function(dem,
     routing   = rout_df
   )
 
+  # --- Optional HRU overlay from land-use and soil rasters ------------------
+  if (!is.null(landuse) && !is.null(soil)) {
+    if (verbose) emit_progress("Running HRU overlay from land-use and soil rasters...")
+    # Need an sf object for spatial extraction.  When return_sf = TRUE the
+    # subbasins element is already an sf; otherwise reconstruct it.
+    sub_sf <- if (inherits(gis_data$subbasins, "sf")) {
+      gis_data$subbasins
+    } else {
+      sf::st_sf(gis_data$subbasins, geometry = sub_geom)
+    }
+    hru_result <- delineate_hrus(
+      subbasins        = sub_sf,
+      dem              = dem_rast,
+      landuse          = landuse,
+      soil             = soil,
+      landuse_lookup   = landuse_lookup,
+      soil_lookup      = soil_lookup,
+      slope_thresholds = slope_thresholds,
+      hru_threshold    = hru_threshold,
+      verbose          = verbose
+    )
+    if (!is.null(hru_result)) {
+      # Attach geometry if returning sf (one polygon per HRU = parent subbasin)
+      if (return_sf) {
+        hru_geom <- sf::st_geometry(sub_sf)[hru_result$lsu]
+        gis_data$hrus <- sf::st_sf(hru_result, geometry = hru_geom)
+      } else {
+        gis_data$hrus <- hru_result
+      }
+    }
+  }
+
   if (verbose)
     emit_progress(100L, sprintf(
       "Delineation complete: %d subbasin(s), %d channel(s), %d HRU(s).",
-      nrow(sub_df), nrow(ch_df), nrow(hru_df)
+      nrow(sub_df), nrow(ch_df), nrow(gis_data$hrus)
     ))
 
   # -------------------------------------------------------------------------
