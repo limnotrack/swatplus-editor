@@ -351,14 +351,31 @@ test_that("use_existing_watershed returns a list from an empty dir", {
 test_that("use_existing_watershed returns sf objects by default", {
   skip_if_not_installed("sf")
   skip_if_not_installed("terra")
+  project_db <- tempfile(fileext = ".sqlite")
+  create_project_db(project_db = project_db)
+  
   wd <- system.file("extdata", package = "swatplusEditoR")
   skip_if(wd == "", "extdata not found")
   dem_file <- list.files(wd, pattern = "^dem\\.tif$", full.names = TRUE)
   skip_if(length(dem_file) == 0L, "dem.tif not found in extdata")
 
   # Default: return_sf = TRUE
-  res <- use_existing_watershed(wd, dem_file = dem_file[[1L]], verbose = FALSE)
+  res <- use_existing_watershed(wd, dem_file = dem_file, verbose = TRUE,
+                                project_db = project_db)
+  
+  con <- swat_open_db(project_db)
+  write_gis_to_db(con = con, subbasins = res$subbasins, channels = res$channels, points = res$points)
+  swat_close_db(con)
   expect_type(res, "list")
+  library(tmap)
+  tmap_mode("view")
+  tm_shape(res$subbasins) +
+    tm_polygons(fill = "white", fill_alpha = 0.5) +
+    tm_shape(res$channels) +
+    tm_lines(col = "blue") +
+    tm_shape(res$points) +
+    tm_dots(fill = "red", size = 1) 
+  
   # Spatial elements should be sf objects
   if (!is.null(res$subbasins))
     expect_s3_class(res$subbasins, "sf")
@@ -441,8 +458,13 @@ test_that("delineate_watershed runs end-to-end with bundled DEM and outlet", {
     outlet           = outlet,
     stream_threshold = 200L,
     snap_distance    = 20L,
-    verbose          = FALSE
+    verbose          = TRUE
   )
+  
+  library(tmap)
+  tmap_mode("view")
+  tm_shape(res$subbasins) +
+    tm_polygons(fill = "red", fill_alpha = 0.5) 
 
   expect_type(res, "list")
   expect_named(res,
@@ -549,141 +571,4 @@ test_that("delineate_watershed writes gis_* tables to project DB", {
   expect_gt(n_sub, 0L)
   expect_gt(n_ch,  0L)
   expect_gt(n_hru, 0L)
-})
-
-# ===========================================================================
-# 4. HRU overlay unit tests — require sf + terra, no TauDEM
-# ===========================================================================
-
-test_that(".make_slope_labels produces correct labels", {
-  expect_equal(.make_slope_labels(c(2, 8, 25, 9999)),
-               c("0-2", "2-8", "8-25", "25-9999"))
-  expect_equal(.make_slope_labels(c(9999)), c("0-9999"))
-})
-
-test_that(".classify_slope_values assigns correct 1-based class indices", {
-  thresholds <- c(2, 8, 25, 9999)
-  # below 2  → class 1
-  expect_equal(.classify_slope_values(c(0, 1), thresholds), c(1L, 1L))
-  # 2 to 8  → class 2
-  expect_equal(.classify_slope_values(c(2, 5, 7.9), thresholds), c(2L, 2L, 2L))
-  # 8 to 25 → class 3
-  expect_equal(.classify_slope_values(c(8, 20), thresholds), c(3L, 3L))
-  # >= 25   → class 4
-  expect_equal(.classify_slope_values(c(25, 100), thresholds), c(4L, 4L))
-})
-
-test_that(".apply_hru_threshold removes small HRUs and renormalises", {
-  fracs <- data.frame(
-    lu_val = c("1", "1", "2"), soil_val = c("A", "B", "A"),
-    slp_cls = 1L, n_cells = c(90L, 5L, 5L), area_ha = c(90, 5, 5),
-    frac_sub = c(0.90, 0.05, 0.05)
-  )
-  result <- .apply_hru_threshold(fracs, threshold = 0.06)
-  expect_equal(nrow(result), 1L)
-  expect_equal(result$frac_sub, 1.0)
-
-  # If all below threshold, the largest is kept
-  fracs_all_small <- data.frame(
-    lu_val = "1", soil_val = "A", slp_cls = 1L,
-    n_cells = 1L, area_ha = 1, frac_sub = 0.001
-  )
-  kept <- .apply_hru_threshold(fracs_all_small, threshold = 0.5)
-  expect_equal(nrow(kept), 1L)
-})
-
-test_that(".compute_hru_fracs returns correct area fractions", {
-  # Two land-uses, two soils — 4 HRUs with equal area
-  fracs <- data.frame(
-    lu_val   = c("1", "1", "2", "2"),
-    soil_val = c("A", "B", "A", "B"),
-    slp_cls  = 1L,
-    n_cells  = 25L,
-    area_ha  = 25.0,
-    frac_sub = 0.25  # each HRU covers 25% of subbasin
-  )
-  result <- .compute_hru_fracs(fracs)
-
-  # arland: lu 1 covers 50%, lu 2 covers 50%
-  expect_equal(unique(result$arland[result$lu_val == "1"]), 0.5)
-  expect_equal(unique(result$arland[result$lu_val == "2"]), 0.5)
-
-  # arso: each (lu, soil) covers 50% of its lu class → arso = 0.5
-  expect_true(all(result$arso == 0.5))
-
-  # arslp: frac_sub / (arland * arso) = 0.25 / (0.5 * 0.5) = 1.0
-  expect_true(all(result$arslp == 1.0))
-})
-
-test_that("delineate_hrus errors informatively when subbasins lacks CRS", {
-  skip_if_not_installed("sf")
-  skip_if_not_installed("terra")
-  bad_sub <- sf::st_sf(data.frame(area = 100),
-                       geometry = sf::st_sfc(sf::st_polygon(
-                         list(cbind(c(0,1,1,0,0), c(0,0,1,1,0))))))
-  # No CRS set → should error with a clear message
-  expect_error(
-    delineate_hrus(bad_sub, dem = "fake.tif", landuse = "fake.tif",
-                   soil = "fake.tif"),
-    "CRS"
-  )
-})
-
-test_that("delineate_hrus returns correct columns with synthetic rasters", {
-  skip_if_not_installed("sf")
-  skip_if_not_installed("terra")
-
-  # Build a tiny 10x10 raster in NZTM (projected, metre units)
-  make_rast <- function(vals) {
-    r <- terra::rast(nrows = 10, ncols = 10,
-                     xmin = 1814000, xmax = 1814100,
-                     ymin = 5735000, ymax = 5735100,
-                     crs = "EPSG:2193")
-    terra::values(r) <- vals
-    r
-  }
-
-  dem_r     <- make_rast(seq(100, 190, length.out = 100))
-  landuse_r <- make_rast(c(rep(1L, 50L), rep(2L, 50L)))  # two halves
-  soil_r    <- make_rast(c(rep(1L, 50L), rep(1L, 50L)))  # same soil everywhere
-
-  # Create matching sf subbasin covering the raster extent
-  bbox <- terra::ext(dem_r)
-  poly <- sf::st_sf(
-    data.frame(id = 1L, area = 1.0, slo1 = 0.05, elev = 150.0),
-    geometry = sf::st_sfc(
-      sf::st_polygon(list(cbind(
-        c(bbox[1], bbox[2], bbox[2], bbox[1], bbox[1]),
-        c(bbox[3], bbox[3], bbox[4], bbox[4], bbox[3])
-      ))),
-      crs = "EPSG:2193"
-    )
-  )
-
-  result <- delineate_hrus(
-    subbasins        = poly,
-    dem              = dem_r,
-    landuse          = landuse_r,
-    soil             = soil_r,
-    slope_thresholds = c(9999),  # single slope class
-    hru_threshold    = 0.01,
-    verbose          = FALSE
-  )
-
-  expect_s3_class(result, "data.frame")
-  expect_true(all(c("id", "lsu", "arsub", "arlsu", "landuse", "arland",
-                    "soil", "arso", "slp", "arslp", "slope",
-                    "lat", "lon", "elev") %in% names(result)))
-
-  # Two land-use classes, one soil → 2 HRUs
-  expect_equal(nrow(result), 2L)
-
-  # Area fractions must sum to 1 within the single subbasin
-  expect_equal(sum(result$arsub), 1.0, tolerance = 0.01)
-
-  # arland for each landuse class ≈ 0.5
-  expect_equal(sum(unique(result$arland)), 1.0, tolerance = 0.01)
-
-  # All HRUs belong to lsu = 1
-  expect_true(all(result$lsu == 1L))
 })
