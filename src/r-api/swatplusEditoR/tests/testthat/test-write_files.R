@@ -46,6 +46,7 @@ test_that("write_swatplus_files creates expected output files", {
   expect_true(file.exists(file.path(out_dir, "codes.bsn")))
   expect_true(file.exists(file.path(out_dir, "parameters.bsn")))
   expect_true(file.exists(file.path(out_dir, "object.cnt")))
+  expect_true(file.exists(file.path(out_dir, "file.cio")))
   expect_gt(n, 0L)
 })
 
@@ -75,4 +76,29 @@ test_that("write_swatplus_files updates input_files_last_written", {
   ts <- DBI::dbGetQuery(con,
     "SELECT input_files_last_written FROM project_config")$input_files_last_written
   expect_false(is.na(ts))
+})
+
+test_that("file.cio is always written and contains required sections", {
+  prj_file <- tempfile(fileext = ".sqlite")
+  out_dir  <- tempfile()
+  on.exit({ unlink(prj_file); unlink(out_dir, recursive = TRUE) }, add = TRUE)
+
+  minimal_project_db(prj_file)
+  write_swatplus_files(prj_file, out_dir, verbose = FALSE)
+
+  cio_path <- file.path(out_dir, "file.cio")
+  expect_true(file.exists(cio_path))
+
+  lines <- readLines(cio_path)
+  # Line 1: header comment
+  expect_true(grepl("file\\.cio", lines[[1L]], ignore.case = TRUE))
+  # Required sections must appear (section name left-justified in the line)
+  expect_true(any(grepl("^simulation", lines)))
+  expect_true(any(grepl("^basin", lines)))
+  expect_true(any(grepl("^climate", lines)))
+  expect_true(any(grepl("^connect", lines)))
+  # Populated tables yield real filenames; empty ones yield "null"
+  sim_line <- lines[grepl("^simulation", lines)][[1L]]
+  expect_true(grepl("time\\.sim", sim_line))   # time_sim is populated
+  expect_true(grepl("print\\.prt", sim_line))  # print_prt is populated
 })

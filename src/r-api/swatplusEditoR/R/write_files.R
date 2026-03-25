@@ -76,6 +76,13 @@ write_swatplus_files <- function(project_db,
   n_written <- n_written + .write_management_sch(con, output_dir)
   n_written <- n_written + .write_decision_table(con, output_dir)
 
+  if (verbose) emit_progress(97, "Writing file.cio master control file...")
+  ver <- tryCatch({
+    cfg <- DBI::dbGetQuery(con, "SELECT editor_version FROM project_config LIMIT 1")
+    if (nrow(cfg) > 0L && !is.na(cfg$editor_version[[1L]])) cfg$editor_version[[1L]] else "2.3.0"
+  }, error = function(e) "2.3.0")
+  n_written <- n_written + .write_file_cio(con, output_dir, version = ver)
+
   # Update project_config timestamp
   DBI::dbExecute(con,
     "UPDATE project_config SET input_files_last_written = datetime('now')")
@@ -428,8 +435,228 @@ write_swatplus_files <- function(project_db,
 }
 
 # ===========================================================================
-# Connection file helper
+# file.cio master control file
 # ===========================================================================
+
+#' Write the SWAT+ master control file (file.cio)
+#'
+#' Mirrors \code{fileio/config.py File_cio.write()} in the Python API.
+#' For each classification section the function queries the project database
+#' to decide whether each file is present (by checking for data in the
+#' corresponding table); absent files are written as \code{"null"}.
+#'
+#' @param con      Open DBI connection to the project database.
+#' @param dir      Output directory.
+#' @param version  Editor version string embedded in the header comment.
+#' @return Invisibly, 1L (one file written).
+#' @keywords internal
+.write_file_cio <- function(con, dir, version = "2.3.0") {
+
+  # Helper: TRUE when table has >= 1 row
+  has <- function(tbl) {
+    tryCatch(swat_count(con, tbl) > 0L, error = function(e) FALSE)
+  }
+  # Helper: TRUE when table has >= 1 row matching a WHERE clause
+  has_where <- function(tbl, where) {
+    tryCatch(swat_count(con, tbl, where) > 0L, error = function(e) FALSE)
+  }
+
+  null_str <- "null"
+
+  # Each element: c(section_name, file1, file2, ...)
+  # Order and conditions mirror Python get_classifications()
+  sections <- list(
+    # 1 – simulation
+    c("simulation",
+      if (has("time_sim"))     "time.sim"     else null_str,
+      if (has("print_prt"))    "print.prt"    else null_str,
+      null_str,                                             # object.prt
+      if (has("object_cnt"))   "object.cnt"   else null_str,
+      null_str                                              # constituents.cs
+    ),
+    # 2 – basin
+    c("basin",
+      if (has("codes_bsn"))       "codes.bsn"       else null_str,
+      if (has("parameters_bsn"))  "parameters.bsn"  else null_str
+    ),
+    # 3 – climate
+    c("climate",
+      if (has("weather_sta_cli"))                       "weather-sta.cli" else null_str,
+      if (has("weather_wgn_cli"))                       "weather-wgn.cli" else null_str,
+      null_str,                                                             # wind-dir.cli
+      if (has_where("weather_file", "type = 'pcp'"))    "pcp.cli"         else null_str,
+      if (has_where("weather_file", "type = 'tmp'"))    "tmp.cli"         else null_str,
+      if (has_where("weather_file", "type = 'slr'"))    "slr.cli"         else null_str,
+      if (has_where("weather_file", "type = 'hmd'"))    "hmd.cli"         else null_str,
+      if (has_where("weather_file", "type = 'wnd'"))    "wnd.cli"         else null_str,
+      null_str                                                              # atmodep.cli
+    ),
+    # 4 – connect
+    c("connect",
+      if (has("hru_con"))        "hru.con"        else null_str,
+      if (has("hru_lte_con"))    "hru-lte.con"    else null_str,
+      if (has("rout_unit_con"))  "rout_unit.con"  else null_str,
+      null_str,                                              # modflow.con
+      if (has("aquifer_con"))    "aquifer.con"    else null_str,
+      null_str,                                              # aquifer2d.con
+      if (has("channel_con"))    "channel.con"    else null_str,
+      if (has("reservoir_con"))  "reservoir.con"  else null_str,
+      if (has("recall_con"))     "recall.con"     else null_str,
+      null_str,                                              # exco.con
+      null_str,                                              # delratio.con
+      if (has("outlet_con"))     "outlet.con"     else null_str,
+      null_str                                               # chandeg.con
+    ),
+    # 5 – channel
+    c("channel",
+      null_str,                                              # initial.cha
+      null_str,                                              # channel.cha
+      null_str,                                              # hydrology.cha
+      null_str,                                              # sediment.cha
+      null_str,                                              # nutrients.cha
+      if (has("channel_lte_cha"))    "channel-lte.cha"   else null_str,
+      if (has("hyd_sed_lte_cha"))    "hyd-sed-lte.cha"   else null_str,
+      null_str                                               # temperature.cha
+    ),
+    # 6 – reservoir
+    c("reservoir",
+      null_str, null_str, null_str, null_str, null_str,     # res subfiles
+      null_str, null_str, null_str                           # weir/wetland
+    ),
+    # 7 – routing_unit
+    c("routing_unit",
+      if (has("rout_unit_con"))  "rout_unit.def"  else null_str,
+      if (has("rout_unit_con"))  "rout_unit.ele"  else null_str,
+      if (has("rout_unit_rtu"))  "rout_unit.rtu"  else null_str,
+      null_str                                               # rout_unit.dr
+    ),
+    # 8 – hru
+    c("hru",
+      if (has("hru_data_hru"))  "hru-data.hru"  else null_str,
+      if (has("hru_lte_hru"))   "hru-lte.hru"   else null_str
+    ),
+    # 9 – exco
+    c("exco",
+      null_str, null_str, null_str, null_str, null_str, null_str
+    ),
+    # 10 – recall
+    c("recall",
+      if (has("recall_rec")) "recall.rec" else null_str
+    ),
+    # 11 – dr
+    c("dr",
+      null_str, null_str, null_str, null_str, null_str, null_str
+    ),
+    # 12 – aquifer
+    c("aquifer",
+      if (has("initial_aqu"))  "initial.aqu"  else null_str,
+      if (has("aquifer_aqu"))  "aquifer.aqu"  else null_str
+    ),
+    # 13 – herd (animal)
+    c("herd",
+      null_str, null_str, null_str
+    ),
+    # 14 – water_rights
+    c("water_rights",
+      null_str, null_str, null_str
+    ),
+    # 15 – link
+    c("link",
+      null_str, null_str
+    ),
+    # 16 – hydrology
+    c("hydrology",
+      if (has("hydrology_hyd"))   "hydrology.hyd"   else null_str,
+      if (has("topography_hyd"))  "topography.hyd"  else null_str,
+      if (has("field_fld"))       "field.fld"        else null_str
+    ),
+    # 17 – structural
+    c("structural",
+      null_str, null_str, null_str, null_str, null_str
+    ),
+    # 18 – hru_parm_db
+    c("hru_parm_db",
+      if (has("plants_plt"))       "plants.plt"     else null_str,
+      if (has("fertilizer_frt"))   "fertilizer.frt" else null_str,
+      if (has("tillage_til"))      "tillage.til"    else null_str,
+      null_str, null_str, null_str, null_str,                # pest/path/metal/salt
+      if (has("urban_urb"))        "urban.urb"      else null_str,
+      null_str,                                              # septic.sep
+      if (has("snow_sno"))         "snow.sno"       else null_str
+    ),
+    # 19 – ops
+    c("ops",
+      if (has("harv_ops"))    "harv.ops"     else null_str,
+      if (has("graze_ops"))   "graze.ops"    else null_str,
+      if (has("irr_ops"))     "irr.ops"      else null_str,
+      null_str,                                              # chem_app.ops
+      if (has("fire_ops"))    "fire.ops"     else null_str,
+      null_str                                               # sweep.ops
+    ),
+    # 20 – lum
+    c("lum",
+      if (has("landuse_lum"))      "landuse.lum"       else null_str,
+      if (has("management_sch"))   "management.sch"    else null_str,
+      null_str, null_str, null_str                           # cntable/cons/ovn
+    ),
+    # 21 – chg (calibration/soft data)
+    c("chg",
+      null_str, null_str, null_str, null_str, null_str,
+      null_str, null_str, null_str, null_str
+    ),
+    # 22 – init
+    c("init",
+      null_str,                                              # plant.ini
+      if (has("soil_plant_ini"))  "soil_plant.ini"  else null_str,
+      if (has("om_water_ini"))    "om_water.ini"    else null_str,
+      null_str, null_str, null_str, null_str,                # pest/path ini
+      null_str, null_str, null_str, null_str                 # hmet/salt ini
+    ),
+    # 23 – soils
+    c("soils",
+      if (has("soils_sol"))      "soils.sol"      else null_str,
+      if (has("nutrients_sol"))  "nutrients.sol"  else null_str,
+      null_str                                               # soils_lte.sol
+    ),
+    # 24 – decision_table
+    c("decision_table",
+      if (has_where("d_table_dtl", "file_name = 'lum.dtl'"))     "lum.dtl"     else null_str,
+      if (has_where("d_table_dtl", "file_name = 'res_rel.dtl'")) "res_rel.dtl" else null_str,
+      if (has_where("d_table_dtl", "file_name = 'scen_lu.dtl'")) "scen_lu.dtl" else null_str,
+      if (has_where("d_table_dtl", "file_name = 'flo_con.dtl'")) "flo_con.dtl" else null_str
+    ),
+    # 25 – regions
+    c("regions",
+      null_str, null_str, null_str, null_str, null_str,
+      null_str, null_str, null_str, null_str, null_str,
+      null_str, null_str, null_str, null_str, null_str,
+      null_str, null_str
+    ),
+    # 26-31 – paths (always null unless netcdf)
+    c("pcp_path", null_str),
+    c("tmp_path", null_str),
+    c("slr_path", null_str),
+    c("hmd_path", null_str),
+    c("wnd_path", null_str),
+    c("out_path", null_str)
+  )
+
+  # Format: each token left-justified in 16 chars, then 2 spaces (Python default)
+  pad18 <- function(x) formatC(x, width = -16L, flag = "-")
+
+  section_lines <- vapply(sections, function(s) {
+    paste(vapply(s, pad18, character(1L)), collapse = "  ")
+  }, character(1L))
+
+  header <- paste0(
+    "file.cio: written by SWAT+ editor v", version,
+    " on ", format(Sys.time(), "%Y-%m-%d %H:%M")
+  )
+
+  .write_file(dir, "file.cio", c(header, section_lines))
+}
+
+
 
 .write_con_file <- function(con, dir, filename, rows, out_table_prefix) {
   out_table <- paste0(out_table_prefix, "_out")
