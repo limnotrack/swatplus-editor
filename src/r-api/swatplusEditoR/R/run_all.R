@@ -204,11 +204,14 @@ run_all <- function(project_db,
     else {
       if (verbose) emit_progress(60, "Running SWAT+ model...")
       ret <- tryCatch(
-        system2(swat_exe, stdout = TRUE, stderr = TRUE,
-                wd = resolved_output_dir),
+        run_swatplus(
+          swat_exe    = swat_exe,
+          working_dir = resolved_output_dir,
+          verbose     = verbose
+        ),
         error = function(e) { warning("Model execution failed: ", conditionMessage(e)); NULL }
       )
-      if (!is.null(ret)) {
+      if (!is.null(ret) && isTRUE(ret$success)) {
         model_success <- TRUE
         result$model <- TRUE
         # Update run timestamp
