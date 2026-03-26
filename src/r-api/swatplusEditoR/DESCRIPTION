@@ -1,0 +1,23 @@
+Package: swatplusEditoR
+Title: R Interface to SWAT+ Editor API
+Version: 0.1.0
+Authors@R:
+    person("SWAT+ Editor", "Development Team", role = c("aut", "cre"),
+           email = "swatplus@example.com")
+Description: Provides an R interface to the SWAT+ Editor project database.
+    Supports direct SQLite access for managing weather stations, updating model
+    parameters, configuring groundwater flow (GWFLOW), and writing SWAT+ model
+    configuration files. Works with project objects containing GIS data stored
+    in SQLite databases with gis_* tables.
+License: GPL (>= 3)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+Imports:
+    DBI,
+    RSQLite
+Suggests:
+    testthat (>= 3.0.0),
+    httr,
+    jsonlite
+Config/testthat/edition: 3
