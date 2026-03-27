@@ -1,18 +1,28 @@
 # Test GWFLOW configuration functions
 
 create_gwflow_test_project <- function() {
-  db_path <- tempfile(fileext = ".sqlite")
-  project_dir <- tempdir()
-
-  project <- list(
-    project_dir = project_dir,
-    db_file = db_path,
-    hru_data = NULL,
-    basin_data = NULL
-  )
-
-  project <- create_project_db(project, db_path, overwrite = TRUE)
-  project
+  dem <- system.file("extdata", "ravn_dem.tif", package = "rQSWATPlus")
+  landuse <- system.file("extdata", "ravn_landuse.tif", package = "rQSWATPlus")
+  soil <- system.file("extdata", "ravn_soil.tif", package = "rQSWATPlus")
+  lu_lookup <- system.file("extdata", "ravn_landuse.csv", package = "rQSWATPlus")
+  soil_lookup <- system.file("extdata", "ravn_soil.csv", package = "rQSWATPlus")
+  outlet <- system.file("extdata", "ravn_outlet.shp", package = "rQSWATPlus")
+  
+  rQSWATPlus::qswat_run(
+    project_dir = file.path(tempdir(), "ravn_quick"),
+    dem_file = dem,
+    landuse_file = landuse,
+    soil_file = soil,
+    landuse_lookup = lu_lookup,
+    soil_lookup = soil_lookup,
+    outlet_file = outlet,
+    threshold = 500,
+    slope_breaks = c(0, 5, 15, 9999),
+    landuse_threshold = 5,
+    soil_threshold = 5, 
+    db_file = "swat.db",
+    quiet = TRUE
+  )  
 }
 
 test_that("get_gwflow_status returns status", {
@@ -27,7 +37,6 @@ test_that("get_gwflow_status returns status", {
 
 test_that("init_gwflow creates GWFLOW tables and config", {
   project <- create_gwflow_test_project()
-  on.exit(unlink(project$db_file))
 
   init_gwflow(project, cell_size = 200, row_count = 50, col_count = 60)
 
