@@ -97,9 +97,12 @@ set_simulation_time(project, day_start = 1, yrc_start = 2000,
 init_gwflow(project, cell_size = 200, row_count = 100, col_count = 150)
 update_gwflow_zones(project, zone_id = 1, aquifer_k = 15.0)
 
-# Step 8: Write configuration files
+# Step 8: Write configuration files (all done within R!)
 write_config_files(project)
-# Or with the editor executable for complete file generation:
+# Or specify weather data directory and output location:
+write_config_files(project, output_dir = "/path/to/TxtInOut",
+                   weather_dir = "/path/to/weather")
+# Optional: delegate to Python executable if preferred:
 write_config_files(project, editor_exe = "/path/to/swatplus_api.py")
 
 # Step 9: Run SWAT+

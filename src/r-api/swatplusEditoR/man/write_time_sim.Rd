@@ -4,12 +4,24 @@
 \alias{write_time_sim}
 \title{Write time.sim file}
 \usage{
-write_time_sim(con, output_dir)
+write_time_sim(
+  con,
+  output_dir,
+  version = NULL,
+  swat_version = NULL,
+  file_name = "time.sim"
+)
 }
 \arguments{
 \item{con}{Database connection.}
 
 \item{output_dir}{Output directory.}
+
+\item{version}{Editor version.}
+
+\item{swat_version}{SWAT+ version.}
+
+\item{file_name}{Output file name.}
 }
 \description{
 Write time.sim file

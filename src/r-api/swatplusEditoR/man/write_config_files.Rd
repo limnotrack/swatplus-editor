@@ -7,52 +7,48 @@
 write_config_files(
   project,
   output_dir = NULL,
+  swat_version = "60",
+  weather_dir = NULL,
   editor_exe = NULL,
-  api_url = "http://localhost:5000",
-  swat_version = "60"
+  api_url = NULL
 )
 }
 \arguments{
 \item{project}{List. A SWAT+ project object with \code{db_file}.}
 
 \item{output_dir}{Character. Directory where the input files will be
-written. Defaults to "TxtInOut" in the project directory.}
+written. Defaults to \code{"TxtInOut"} in the project directory.}
 
-\item{editor_exe}{Character. Path to the SWAT+ Editor executable/script.
-If NULL, attempts to use a running API server or falls back to direct
-database writing.}
+\item{swat_version}{Character. SWAT+ version string. Default \code{"60"}.}
 
-\item{api_url}{Character. URL of a running SWAT+ Editor API server.
-Default is "http://localhost:5000".}
+\item{weather_dir}{Character. Path to weather data files. If provided,
+weather \code{.cli} files are copied from this directory to output_dir.}
 
-\item{swat_version}{Character. SWAT+ version string. Default "60".}
+\item{editor_exe}{Character. Optional path to the SWAT+ Editor
+executable/script. If provided, delegates to the exe instead of writing
+natively. Default \code{NULL} (write natively in R).}
+
+\item{api_url}{Character. Optional URL of a running SWAT+ Editor API
+server. Default \code{NULL} (write natively in R).}
 }
 \value{
 The project object (invisibly).
 }
 \description{
-Writes all SWAT+ input files (TxtInOut) from the project database using
-the SWAT+ Editor Python API. This is the main function to generate the
-model configuration files required to run SWAT+.
-}
-\details{
-The function works by either:
-\enumerate{
-\item Calling the Python API directly via system command if the
-\code{editor_exe} is provided
-\item Sending HTTP requests to a running SWAT+ Editor API server
-\item Writing files directly from database tables (for simple file types)
-}
+Writes all SWAT+ input files (TxtInOut) from the project database entirely
+within R, without requiring an external Python executable or API server.
+The writing logic mirrors the Python \code{fileio} modules in the SWAT+
+Editor repository.
 }
 \examples{
 \dontrun{
-# Using the Python API executable
-write_config_files(project, editor_exe = "/path/to/swatplus_api.py")
-
-# Using a running API server
-write_config_files(project, api_url = "http://localhost:5000")
-
-# Direct database write (limited file types)
+# Write all SWAT+ input files natively in R (recommended)
 write_config_files(project)
+
+# Specify a custom output directory
+write_config_files(project, output_dir = "/path/to/TxtInOut")
+
+# Copy weather data files from another directory
+write_config_files(project, weather_dir = "/path/to/weather")
 }
 }
