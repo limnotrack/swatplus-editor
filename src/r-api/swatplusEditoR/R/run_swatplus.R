@@ -85,10 +85,7 @@ run_swatplus <- function(swat_exe    = swatplus_exe(),
     stop("SWAT+ executable not found: ", swat_exe, call. = FALSE)
   if (!dir.exists(working_dir))
     stop("Working directory not found: ", working_dir, call. = FALSE)
-  
-  if (verbose)
-    emit_progress("Running SWAT+ model...")
-  
+
   t_start <- proc.time()[["elapsed"]]
   
   # processx::run() blocks until the process exits, streaming output when
