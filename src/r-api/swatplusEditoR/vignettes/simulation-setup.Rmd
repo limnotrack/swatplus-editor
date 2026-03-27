@@ -1,0 +1,442 @@
+---
+title: "Setting Up a SWAT+ Simulation"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Setting Up a SWAT+ Simulation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+## Overview
+
+This vignette walks through every step involved in setting up and running a
+SWAT+ simulation using the **swatplusEditoR** package.
+The workflow assumes that watershed delineation and HRU definition have already
+been completed—for example using the [rQSWATPlus](https://github.com/celray/rQSWATPlus)
+package—and that a project database (`.sqlite` or `.db`) already exists.
+
+The typical simulation setup follows these steps:
+
+1. **Initialise the project** – create a project database from delineated
+   watershed data using rQSWATPlus (or load an existing database)
+2. **Load and inspect the project** – validate the database and review GIS
+   tables
+3. **Add weather data** – supply weather station observations and/or weather
+   generator parameters
+4. **Configure simulation parameters** – set the time period, output options,
+   and adjust model parameters
+5. **Write SWAT+ input files** – generate the complete TxtInOut file set
+   entirely within R
+6. **Run the model** – execute the bundled SWAT+ executable
+
+---
+
+## Step 1: Initialise the Project with rQSWATPlus
+
+The first step is to delineate the watershed and define HRUs.
+The **rQSWATPlus** package automates this process from DEM, land-use, and soil
+rasters.  The example below uses the Ravn catchment data that ships with
+rQSWATPlus:
+  
+```{r rqswatplus-init}
+# ── Locate example datasets bundled with rQSWATPlus ──────────────────────────
+dem         <- system.file("extdata", "ravn_dem.tif",      package = "rQSWATPlus")
+landuse     <- system.file("extdata", "ravn_landuse.tif",  package = "rQSWATPlus")
+soil        <- system.file("extdata", "ravn_soil.tif",     package = "rQSWATPlus")
+lu_lookup   <- system.file("extdata", "ravn_landuse.csv",  package = "rQSWATPlus")
+soil_lookup <- system.file("extdata", "ravn_soil.csv",     package = "rQSWATPlus")
+outlet      <- system.file("extdata", "ravn_outlet.shp",   package = "rQSWATPlus")
+
+# ── Run the complete delineation + HRU workflow ──────────────────────────────
+project <- rQSWATPlus::qswat_run(
+  project_dir     = file.path(tempdir(), "ravn_quick"),
+  dem_file        = dem,
+  landuse_file    = landuse,
+  soil_file       = soil,
+  landuse_lookup  = lu_lookup,
+  soil_lookup     = soil_lookup,
+  outlet_file     = outlet,
+  threshold       = 500,
+  slope_breaks    = c(0, 5, 15, 9999),
+  landuse_threshold = 5,
+  soil_threshold    = 5,
+  db_file         = "swat.db",
+  quiet           = TRUE
+)
+```
+
+After `qswat_run()` completes, the `project` object contains the paths to all
+generated files and, crucially, the `db_file` field pointing to the SQLite
+project database.
+
+> **Tip:** If you already have an existing SWAT+ Editor project database you
+> can skip this step and simply point `project$db_file` at that file.
+
+---
+
+## Step 2: Load and Inspect the Project
+
+Once the database exists, use **swatplusEditoR** to load and validate it:
+
+```{r load-project}
+library(swatplusEditoR)
+
+# Load the project – validates the database and lists available GIS tables
+project <- load_project(project)
+```
+
+### Reviewing Project Information
+
+```{r project-info}
+# Summary of project status
+info <- get_project_info(project)
+info
+```
+
+`get_project_info()` returns a list with counts for subbasins, channels, HRUs,
+weather stations, and timestamps showing when files were last written or the
+model was last run.
+
+### Reading GIS Data
+
+You can inspect any of the GIS tables directly:
+
+```{r gis-data}
+# Read all GIS tables at once
+gis <- read_gis_data(project)
+names(gis)
+
+# Or read individual tables
+subbasins <- read_gis_subbasins(project)
+head(subbasins)
+
+channels <- read_gis_channels(project)
+head(channels)
+
+hrus <- read_gis_hrus(project)
+head(hrus)
+```
+
+Other GIS readers include `read_gis_lsus()`, `read_gis_aquifers()`,
+`read_gis_routing()`, `read_gis_water()`, and `read_gis_points()`.
+
+---
+
+## Step 3: Add Weather Data
+
+SWAT+ requires weather forcing data.  You can add **weather stations** (which
+reference `.cli` files on disk) and **weather generators** (monthly statistics
+used by the built-in weather generator).
+
+### Adding Weather Stations
+
+Create a data frame where each row represents a station.  The `pcp`, `tmp`,
+`slr`, `hmd`, `wnd`, and `pet` columns contain the file names of the
+corresponding climate input files:
+
+```{r add-stations}
+stations <- data.frame(
+  name     = c("station1", "station2"),
+  lat      = c(55.8, 55.9),
+  lon      = c(9.6, 9.7),
+  pcp      = c("pcp1.cli", "pcp2.cli"),
+  tmp      = c("tmp1.cli", "tmp2.cli"),
+  slr      = c("slr1.cli", "slr2.cli"),
+  hmd      = c("hmd1.cli", "hmd2.cli"),
+  wnd      = c("wnd1.cli", "wnd2.cli"),
+  pet      = c("pet1.cli", "pet2.cli"),
+  atmo_dep = c("atmo1.cli", "atmo2.cli"),
+  stringsAsFactors = FALSE
+)
+
+add_weather_stations(project, stations)
+```
+
+### Setting the Weather Data Directory
+
+Tell SWAT+ where to find the climate files on disk:
+
+```{r set-weather-dir}
+set_weather_dir(project, "/path/to/weather/data")
+```
+
+### Listing and Updating Stations
+
+```{r list-stations}
+# View all registered stations
+list_weather_stations(project)
+
+# Update a single station field (e.g. change the PCP file)
+update_weather_station(project, station_id = 1, pcp = "pcp1_v2.cli")
+```
+
+### Adding Weather Generators
+
+Weather generator (WGN) parameters provide monthly climate statistics that
+SWAT+ uses when observed data are missing:
+
+```{r add-wgn}
+wgn <- data.frame(
+  name     = "wgn_ravn",
+  lat      = 55.85,
+  lon      = 9.65,
+  elev     = 50,
+  rain_yrs = 30,
+  stringsAsFactors = FALSE
+)
+
+add_weather_generators(project, wgn)
+```
+
+You can optionally supply a `monthly_data` data frame with 12 rows of monthly
+statistics (temperature means/std dev, precipitation, solar radiation, etc.).
+
+---
+
+## Step 4: Configure the Simulation
+
+### Setting the Simulation Period
+
+Define the start and end dates for the model run.  Julian days are used
+(1 = January 1, 365 = December 31):
+  
+```{r sim-time}
+set_simulation_time(
+  project,
+  day_start = 1,
+  yrc_start = 2000,
+  day_end   = 365,
+  yrc_end   = 2010,
+  step      = 0           # 0 = daily time step
+)
+```
+
+### Configuring Output Options
+
+Control what SWAT+ writes during and after the simulation:
+
+```{r print-options}
+set_print_options(
+  project,
+  nyskip  = 2,           # skip 2 years for warm-up
+  csvout  = TRUE,        # write CSV output files
+  dbout   = FALSE,       # do not write SQLite output
+  cdfout  = FALSE        # do not write NetCDF output
+)
+```
+
+### Updating Model Parameters
+
+`update_parameters()` is a general-purpose function that can modify any
+database table.  Common tables include:
+
+| Table | Contents |
+|-------|----------|
+| `hydrology_hyd` | Curve number, percolation, lateral flow |
+| `topography_hyd` | Slope, slope length |
+| `aquifer_aqu` | Groundwater parameters |
+| `channel_cha` | Channel geometry and erodibility |
+| `codes_bsn` | Basin-wide model codes |
+| `parameters_bsn` | Basin-wide calibration parameters |
+
+```{r update-params}
+# Update curve number for ALL HRUs
+update_parameters(project, "hydrology_hyd", list(cn2 = 65))
+
+# Update only specific HRUs (by row ID)
+update_parameters(project, "hydrology_hyd", list(cn2 = 70), ids = c(1, 2, 3))
+
+# Adjust percolation coefficient
+update_parameters(project, "hydrology_hyd", list(perco = 0.5))
+
+# Modify aquifer parameters
+update_parameters(project, "aquifer_aqu", list(gw_dp = 30, bf_max = 1.5))
+```
+
+### Configuring GWFLOW (Optional)
+
+If your model requires a detailed groundwater module:
+
+```{r gwflow}
+# Check current GWFLOW status
+get_gwflow_status(project)
+
+# Initialise GWFLOW grid
+init_gwflow(project, cell_size = 200, row_count = 100, col_count = 150)
+
+# Get/update base configuration
+base <- get_gwflow_base(project)
+update_gwflow_base(project, boundary_conditions = "constant_head")
+
+# Get/update zones
+zones <- get_gwflow_zones(project)
+update_gwflow_zones(project, zone_id = 1, aquifer_k = 15.0)
+```
+
+---
+
+## Step 5: Write SWAT+ Input Files
+
+With the database fully configured, generate the complete set of SWAT+ input
+text files (the "TxtInOut" directory).  **This is done entirely within R**—no
+external Python executable or API server is needed:
+
+```{r write-files}
+write_config_files(project)
+```
+
+By default the files are written to a `TxtInOut` sub-directory inside the
+project directory.  You can customise the output location and provide a
+directory of weather data files to copy:
+
+```{r write-files-custom}
+write_config_files(
+  project,
+  output_dir  = file.path(project$project_dir, "TxtInOut"),
+  weather_dir = "/path/to/weather/data"
+)
+```
+
+The function writes the full suite of SWAT+ input files including:
+
+- **file.cio** – master index
+- **time.sim** – simulation period
+- **print.prt** – output configuration
+- Climate station and weather generator files
+- Connection, channel, reservoir, and routing files
+- HRU, aquifer, basin, hydrology, and soils files
+- Land-use management, operations, and structural files
+- Calibration and decision-table files
+- Region definition files
+
+---
+
+## Step 6: Run the Model
+
+The package ships with a bundled Windows SWAT+ executable.
+Use `run_swatplus()` to launch it:
+  
+```{r run-model}
+result <- run_swatplus(
+  swat_exe    = swatplus_exe(),                              
+  working_dir = file.path(project$project_dir, "TxtInOut"),
+  timeout     = 3600,    # 1-hour timeout
+  verbose     = TRUE     # stream output to console
+)
+```
+
+> **Note:** `swatplus_exe()` returns the path to the bundled Windows
+> executable (`rev61.0.2_64rel.exe`).  On Linux or macOS you will need to
+> supply the path to a compatible SWAT+ binary instead.
+
+The returned list contains:
+
+```{r run-result}
+result$success  # TRUE if exit code == 0
+result$elapsed  # run time in seconds
+result$status   # exit code
+```
+
+---
+
+## Complete Workflow Example
+
+Putting it all together, here is a minimal end-to-end script:
+
+```{r full-workflow}
+library(swatplusEditoR)
+
+# ── 1. Create the project (via rQSWATPlus) ──────────────────────────────────
+dem         <- system.file("extdata", "ravn_dem.tif",      package = "rQSWATPlus")
+landuse     <- system.file("extdata", "ravn_landuse.tif",  package = "rQSWATPlus")
+soil        <- system.file("extdata", "ravn_soil.tif",     package = "rQSWATPlus")
+lu_lookup   <- system.file("extdata", "ravn_landuse.csv",  package = "rQSWATPlus")
+soil_lookup <- system.file("extdata", "ravn_soil.csv",     package = "rQSWATPlus")
+outlet      <- system.file("extdata", "ravn_outlet.shp",   package = "rQSWATPlus")
+
+project <- rQSWATPlus::qswat_run(
+  project_dir       = file.path(tempdir(), "ravn_quick"),
+  dem_file          = dem,
+  landuse_file      = landuse,
+  soil_file         = soil,
+  landuse_lookup    = lu_lookup,
+  soil_lookup       = soil_lookup,
+  outlet_file       = outlet,
+  threshold         = 500,
+  slope_breaks      = c(0, 5, 15, 9999),
+  landuse_threshold = 5,
+  soil_threshold    = 5,
+  db_file           = "swat.db",
+  quiet             = TRUE
+)
+
+# ── 2. Load the project into swatplusEditoR ─────────────────────────────────
+project <- load_project(project)
+
+# ── 3. Add weather data ─────────────────────────────────────────────────────
+stations <- data.frame(
+  name = "ravn_met", lat = 55.85, lon = 9.65,
+  pcp = "pcp.cli", tmp = "tmp.cli", slr = "slr.cli",
+  hmd = "hmd.cli", wnd = "wnd.cli", pet = "pet.cli",
+  atmo_dep = "atmo.cli", stringsAsFactors = FALSE
+)
+add_weather_stations(project, stations)
+set_weather_dir(project, "/path/to/weather")
+
+# ── 4. Configure simulation ─────────────────────────────────────────────────
+set_simulation_time(project,
+  day_start = 1, yrc_start = 2000,
+  day_end = 365, yrc_end = 2010
+)
+set_print_options(project, nyskip = 2, csvout = TRUE)
+
+# ── 5. Write input files ────────────────────────────────────────────────────
+write_config_files(project)
+
+# ── 6. Run the model ────────────────────────────────────────────────────────
+result <- run_swatplus(
+  swat_exe    = swatplus_exe(),
+  working_dir = file.path(project$project_dir, "TxtInOut"),
+  verbose     = TRUE
+)
+
+cat("Success:", result$success, "\n")
+cat("Elapsed:", round(result$elapsed, 1), "seconds\n")
+```
+
+---
+
+## Tips and Troubleshooting
+
+* **Database access** – You can always open the project database directly for
+  custom queries:
+
+    ```r
+    con <- open_project_db(project$db_file)
+    DBI::dbGetQuery(con, "SELECT * FROM time_sim")
+    DBI::dbDisconnect(con)
+    ```
+
+* **Parameter exploration** – To see what columns a table has, read it first:
+
+    ```r
+    con <- open_project_db(project$db_file)
+    head(DBI::dbReadTable(con, "hydrology_hyd"))
+    DBI::dbDisconnect(con)
+    ```
+
+* **Weather file names** – The file names in `add_weather_stations()` must
+  match files present in the weather data directory or already copied to
+  TxtInOut.
+
+* **Cross-platform execution** – The bundled executable is Windows-only.  On
+  Linux / macOS, compile SWAT+ from source and pass the path to
+  `run_swatplus(swat_exe = "/path/to/swatplus")`.
