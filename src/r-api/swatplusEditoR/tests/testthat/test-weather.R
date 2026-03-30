@@ -123,3 +123,69 @@ test_that("add_weather_generators inserts WGN data", {
   expect_equal(result$name[1], "wgn_test")
   expect_equal(result$rain_yrs[1], 30)
 })
+
+# -------------------------------------------------------------------
+# Tests for ERA5 climate data integration
+# -------------------------------------------------------------------
+
+test_that("ERA5 climate data files exist in package", {
+  era5_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
+  expect_true(nchar(era5_dir) > 0, info = "ERA5 directory not found in package")
+  expect_true(dir.exists(era5_dir))
+
+  expected_files <- c("pcp.cli", "tmp.cli", "slr.cli", "hmd.cli", "wnd.cli")
+  for (f in expected_files) {
+    expect_true(file.exists(file.path(era5_dir, f)),
+                info = paste("Missing ERA5 file:", f))
+  }
+})
+
+test_that("add_weather_stations with ERA5 climate file references", {
+  project <- create_weather_test_project()
+  on.exit(unlink(project$db_file))
+
+  # Add a station that references ERA5-style climate files
+  stations <- data.frame(
+    name = "era5_station",
+    lat = 55.5, lon = 12.1,
+    pcp = "IDera5.pcp",
+    tmp = "IDera5.tmp",
+    slr = "IDera5.slr",
+    hmd = "IDera5.hmd",
+    wnd = "IDera5.wnd",
+    stringsAsFactors = FALSE
+  )
+
+  add_weather_stations(project, stations)
+
+  result <- list_weather_stations(project)
+  expect_equal(nrow(result), 1)
+  expect_equal(result$name, "era5_station")
+  expect_equal(result$pcp, "IDera5.pcp")
+  expect_equal(result$tmp, "IDera5.tmp")
+  expect_equal(result$slr, "IDera5.slr")
+  expect_equal(result$hmd, "IDera5.hmd")
+  expect_equal(result$wnd, "IDera5.wnd")
+})
+
+test_that("set_weather_dir works with ERA5 data directory", {
+  project <- create_weather_test_project()
+  on.exit(unlink(project$db_file))
+
+  era5_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
+  skip_if(nchar(era5_dir) == 0, "ERA5 data not installed")
+
+  set_weather_dir(project, era5_dir)
+
+  config <- get_project_config(project)
+  expect_equal(normalizePath(config$weather_data_dir),
+               normalizePath(era5_dir))
+})
+
+test_that("set_weather_dir rejects non-existent directory", {
+  project <- create_weather_test_project()
+  on.exit(unlink(project$db_file))
+
+  expect_error(set_weather_dir(project, "/nonexistent/path"),
+               "does not exist")
+})

@@ -217,7 +217,8 @@ swat_write_table <- function(con, table_name, file_path,
   # Data rows
   for (i in seq_len(nrow(data))) {
     row_parts <- vapply(cols, function(cn) {
-      val <- data[[cn]][i]
+      # Use sequential row number for id column (matching Python bug fix)
+      val <- if (cn == "id") i else data[[cn]][i]
       align <- if (cn %in% names(col_aligns)) col_aligns[[cn]] else {
         if (cn == "name" || cn == "file_name") "left" else "right"
       }

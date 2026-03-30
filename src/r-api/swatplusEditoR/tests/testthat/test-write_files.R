@@ -374,3 +374,177 @@ test_that("write_config_files works on minimal db with ensure_write_tables", {
   expect_true(grepl("time\\.sim", cio_content))
   expect_true(grepl("codes\\.bsn", cio_content))
 })
+
+# -------------------------------------------------------------------
+# Test for sequential ID bug fix (matching Python hru.py / reservoir.py fix)
+# -------------------------------------------------------------------
+
+test_that("swat_write_table uses sequential row numbers for id column", {
+  db_path <- tempfile(fileext = ".sqlite")
+  on.exit(unlink(db_path))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), db_path)
+  # Create table with non-sequential IDs (simulating gaps from deletions)
+  DBI::dbExecute(con, "CREATE TABLE test_gap (
+    id INTEGER PRIMARY KEY, name TEXT, val REAL)")
+  DBI::dbExecute(con, "INSERT INTO test_gap VALUES (5, 'alpha', 1.5)")
+  DBI::dbExecute(con, "INSERT INTO test_gap VALUES (10, 'beta', 2.5)")
+  DBI::dbExecute(con, "INSERT INTO test_gap VALUES (15, 'gamma', 3.5)")
+
+  output_dir <- tempfile("out_")
+  dir.create(output_dir)
+  fp <- file.path(output_dir, "test_gap.tbl")
+
+  # Write WITH id column (ignore_id = FALSE)
+  swatplusEditoR:::swat_write_table(con, "test_gap", fp,
+                                    version = "3.2", swat_version = "60",
+                                    ignore_id = FALSE)
+
+  DBI::dbDisconnect(con)
+
+  lines <- readLines(fp)
+  # Line 1 = meta, line 2 = header, lines 3-5 = data
+  expect_true(length(lines) >= 5)
+
+  # The id values should be sequential 1, 2, 3 - not the DB ids 5, 10, 15
+  # Extract the first number from each data line
+  data_lines <- lines[3:5]
+  ids <- as.integer(trimws(substring(data_lines, 1, 8)))
+  expect_equal(ids, c(1L, 2L, 3L))
+
+  # Also verify names are there
+  content <- paste(lines, collapse = " ")
+  expect_true(grepl("alpha", content))
+  expect_true(grepl("beta", content))
+  expect_true(grepl("gamma", content))
+
+  unlink(output_dir, recursive = TRUE)
+})
+
+# -------------------------------------------------------------------
+# Comprehensive test for writing all necessary simulation files
+# -------------------------------------------------------------------
+
+test_that("write_config_files produces all necessary files for SWAT+ simulation", {
+  project <- create_write_test_project()
+  output_dir <- tempfile("txtinout_full_")
+  on.exit({
+    unlink(project$db_file)
+    unlink(output_dir, recursive = TRUE)
+  })
+
+  # Set weather dir to ERA5 data from package
+  era5_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
+  skip_if(nchar(era5_dir) == 0, "ERA5 data not installed")
+
+  set_weather_dir(project, era5_dir)
+
+  # Write all config files with weather data
+  write_config_files(project, output_dir = output_dir, weather_dir = era5_dir)
+
+  # === Simulation section files ===
+  expect_true(file.exists(file.path(output_dir, "time.sim")),
+              info = "time.sim is required for SWAT+ simulation")
+  expect_true(file.exists(file.path(output_dir, "print.prt")),
+              info = "print.prt is required for SWAT+ simulation")
+  expect_true(file.exists(file.path(output_dir, "object.cnt")),
+              info = "object.cnt is required for SWAT+ simulation")
+
+  # === Basin section files ===
+  expect_true(file.exists(file.path(output_dir, "codes.bsn")),
+              info = "codes.bsn is required for SWAT+ simulation")
+  expect_true(file.exists(file.path(output_dir, "parameters.bsn")),
+              info = "parameters.bsn is required for SWAT+ simulation")
+
+  # === Climate section files ===
+  expect_true(file.exists(file.path(output_dir, "weather-sta.cli")),
+              info = "weather-sta.cli is required for SWAT+ simulation")
+
+  # === Master config file ===
+  expect_true(file.exists(file.path(output_dir, "file.cio")),
+              info = "file.cio is the master config, required for SWAT+")
+
+  # === Weather data files (copied from ERA5 dir) ===
+  expect_true(file.exists(file.path(output_dir, "pcp.cli")),
+              info = "pcp.cli weather data should be copied")
+  expect_true(file.exists(file.path(output_dir, "tmp.cli")),
+              info = "tmp.cli weather data should be copied")
+  expect_true(file.exists(file.path(output_dir, "slr.cli")),
+              info = "slr.cli weather data should be copied")
+  expect_true(file.exists(file.path(output_dir, "hmd.cli")),
+              info = "hmd.cli weather data should be copied")
+  expect_true(file.exists(file.path(output_dir, "wnd.cli")),
+              info = "wnd.cli weather data should be copied")
+
+  # === Verify file contents ===
+  # time.sim should contain correct simulation period
+  time_content <- paste(readLines(file.path(output_dir, "time.sim")),
+                        collapse = " ")
+  expect_true(grepl("2000", time_content))
+  expect_true(grepl("2010", time_content))
+
+  # weather-sta.cli should reference our stations
+  weather_content <- paste(readLines(file.path(output_dir, "weather-sta.cli")),
+                           collapse = " ")
+  expect_true(grepl("sta1", weather_content))
+  expect_true(grepl("sta2", weather_content))
+
+  # file.cio should reference simulation and basin sections
+  cio_content <- paste(readLines(file.path(output_dir, "file.cio")),
+                       collapse = " ")
+  expect_true(grepl("simulation", cio_content))
+  expect_true(grepl("basin", cio_content))
+  expect_true(grepl("climate", cio_content))
+  expect_true(grepl("connect", cio_content))
+  expect_true(grepl("time\\.sim", cio_content))
+  expect_true(grepl("codes\\.bsn", cio_content))
+  expect_true(grepl("weather-sta\\.cli", cio_content))
+
+  # codes.bsn should contain properly formatted default values
+  codes_lines <- readLines(file.path(output_dir, "codes.bsn"))
+  expect_true(grepl("^codes\\.bsn: written by SWAT\\+ editor", codes_lines[1]))
+  expect_true(length(codes_lines) >= 3, info = "codes.bsn should have meta + header + data")
+
+  # parameters.bsn should contain properly formatted default values
+  params_lines <- readLines(file.path(output_dir, "parameters.bsn"))
+  expect_true(grepl("^parameters\\.bsn: written by SWAT\\+ editor", params_lines[1]))
+  expect_true(length(params_lines) >= 3, info = "parameters.bsn should have meta + header + data")
+
+  # print.prt should have proper structure
+  prt_lines <- readLines(file.path(output_dir, "print.prt"))
+  expect_true(grepl("^print\\.prt: written by SWAT\\+ editor", prt_lines[1]))
+
+  # object.cnt should have object counts
+  cnt_lines <- readLines(file.path(output_dir, "object.cnt"))
+  expect_true(grepl("^object\\.cnt: written by SWAT\\+ editor", cnt_lines[1]))
+
+  # Copied weather files should have correct content
+  pcp_content <- readLines(file.path(output_dir, "pcp.cli"))
+  expect_true(grepl("pcp\\.cli", pcp_content[1]))
+  expect_true(grepl("IDera5\\.pcp", pcp_content[3]))
+})
+
+test_that("write_config_files with weather_dir copies ERA5 climate files", {
+  project <- create_write_test_project()
+  output_dir <- tempfile("txtinout_weather_")
+  on.exit({
+    unlink(project$db_file)
+    unlink(output_dir, recursive = TRUE)
+  })
+
+  era5_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
+  skip_if(nchar(era5_dir) == 0, "ERA5 data not installed")
+
+  write_config_files(project, output_dir = output_dir, weather_dir = era5_dir)
+
+  # All ERA5 files should be copied to output
+  for (f in c("pcp.cli", "tmp.cli", "slr.cli", "hmd.cli", "wnd.cli")) {
+    expect_true(file.exists(file.path(output_dir, f)),
+                info = paste("ERA5 file not copied:", f))
+    # Verify it's a faithful copy
+    src_content <- readLines(file.path(era5_dir, f))
+    dst_content <- readLines(file.path(output_dir, f))
+    expect_equal(src_content, dst_content,
+                 info = paste("Content mismatch for:", f))
+  }
+})
