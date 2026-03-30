@@ -1049,6 +1049,109 @@ ensure_write_tables <- function(con) {
   }
 
   # ==================================================================
+  # 26. Herd tables (stub - matching Python write_herd() which is pass)
+  # ==================================================================
+  create_if_missing("CREATE TABLE IF NOT EXISTS animal_hrd (
+    id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS herd_hrd (
+    id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS ranch_hrd (
+    id INTEGER PRIMARY KEY, name TEXT)")
+
+  # ==================================================================
+  # 27. gwflow tables (groundwater flow module)
+  # ==================================================================
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_base (
+      id INTEGER PRIMARY KEY,
+      cell_size REAL, row_count INTEGER, col_count INTEGER,
+      boundary_conditions INTEGER DEFAULT 2,
+      recharge INTEGER DEFAULT 1, soil_transfer INTEGER DEFAULT 0,
+      saturation_excess INTEGER DEFAULT 0, external_pumping INTEGER DEFAULT 0,
+      tile_drainage INTEGER DEFAULT 0, reservoir_exchange INTEGER DEFAULT 0,
+      wetland_exchange INTEGER DEFAULT 0, floodplain_exchange INTEGER DEFAULT 0,
+      canal_seepage INTEGER DEFAULT 0, solute_transport INTEGER DEFAULT 0,
+      timestep_balance REAL DEFAULT 1.0,
+      daily_output INTEGER DEFAULT 0, annual_output INTEGER DEFAULT 0,
+      aa_output INTEGER DEFAULT 0,
+      recharge_delay REAL DEFAULT 0,
+      river_depth REAL DEFAULT 0,
+      daily_output_row INTEGER DEFAULT 0, daily_output_col INTEGER DEFAULT 0,
+      resbed_thickness REAL DEFAULT 0, resbed_k REAL DEFAULT 0,
+      wet_thickness REAL DEFAULT 0,
+      tile_depth REAL DEFAULT 0, tile_area REAL DEFAULT 0,
+      tile_k REAL DEFAULT 0, tile_groups INTEGER DEFAULT 0,
+      transport_steps INTEGER DEFAULT 1, disp_coef REAL DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_zone (
+      id INTEGER PRIMARY KEY, zone_id INTEGER,
+      aquifer_k REAL, specific_yield REAL,
+      streambed_k REAL, streambed_thickness REAL
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_grid (
+      id INTEGER PRIMARY KEY, cell_id INTEGER,
+      status INTEGER DEFAULT 0, elevation REAL DEFAULT 0,
+      aquifer_thickness REAL DEFAULT 0, zone INTEGER DEFAULT 0,
+      extinction_depth REAL DEFAULT 0, initial_head REAL DEFAULT 0,
+      tile INTEGER DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_out_days (
+      id INTEGER PRIMARY KEY, year INTEGER, jday INTEGER
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_obs_locs (
+      id INTEGER PRIMARY KEY, cell_id INTEGER
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_solutes (
+      id INTEGER PRIMARY KEY, solute_name TEXT,
+      sorption REAL DEFAULT 0, rate_const REAL DEFAULT 0,
+      canal_irr REAL DEFAULT 0,
+      init_data TEXT DEFAULT 'single', init_conc REAL DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_init_conc (
+      id INTEGER PRIMARY KEY, cell_id INTEGER,
+      init_no3 REAL DEFAULT 0, init_p REAL DEFAULT 0,
+      init_so4 REAL DEFAULT 0, init_ca REAL DEFAULT 0,
+      init_mg REAL DEFAULT 0, init_na REAL DEFAULT 0,
+      init_k REAL DEFAULT 0, init_cl REAL DEFAULT 0,
+      init_co3 REAL DEFAULT 0, init_hco3 REAL DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_hrucell (
+      id INTEGER PRIMARY KEY, cell_id INTEGER, hru INTEGER,
+      area_m2 REAL DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_fpcell (
+      id INTEGER PRIMARY KEY, cell_id INTEGER, channel_id INTEGER,
+      area_m2 REAL DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_rivcell (
+      id INTEGER PRIMARY KEY, cell_id INTEGER, channel INTEGER,
+      length_m REAL DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_lsucell (
+      id INTEGER PRIMARY KEY, cell_id INTEGER, lsu INTEGER,
+      area_m2 REAL DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_rescell (
+      id INTEGER PRIMARY KEY, cell_id INTEGER, res_id INTEGER,
+      res_stage REAL DEFAULT 0
+    )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS gwflow_wetland (
+      id INTEGER PRIMARY KEY, wet_id INTEGER, thickness REAL DEFAULT 0
+    )")
+
+  # ==================================================================
   # 26. file_cio_classification + file_cio
   # ==================================================================
   create_if_missing("

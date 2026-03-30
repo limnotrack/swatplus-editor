@@ -200,6 +200,9 @@ write_direct <- function(project, output_dir, swat_version = "60",
   v <- version
   sv <- swat_version
 
+  # Update codes_bsn gwflow flag (matches Python gwflow_writer.update_codes_bsn())
+  update_gwflow_codes_bsn(con)
+
   # Helper to get file names from file_cio table
   get_files <- function(section, n) {
     fnames <- get_cio_file_names(con, section)
@@ -333,6 +336,16 @@ write_direct <- function(project, output_dir, swat_version = "60",
   write_table_section(con, output_dir, v, sv, has_cio, "aquifer", list(
     list(tbl = "initial_aqu", file = "initial.aqu"),
     list(tbl = "aquifer_aqu", file = "aquifer.aqu")
+  ))
+
+  # ---- HERD section ----
+  # Stub matching Python write_herd() which is also a pass/stub.
+  # The file.cio section exists (animal.hrd, herd.hrd, ranch.hrd)
+  # but no writer classes exist in the Python codebase either.
+  write_table_section(con, output_dir, v, sv, has_cio, "herd", list(
+    list(tbl = "animal_hrd", file = "animal.hrd"),
+    list(tbl = "herd_hrd", file = "herd.hrd"),
+    list(tbl = "ranch_hrd", file = "ranch.hrd")
   ))
 
   # ---- WATER RIGHTS section ----
@@ -492,6 +505,12 @@ write_direct <- function(project, output_dir, swat_version = "60",
   # ---- file.cio (master index) ----
   message("  Writing file.cio...")
   write_file_cio(con, output_dir, v, sv, is_lte, weather_data_format)
+
+  # ---- GWFLOW files (if gwflow module is active) ----
+  if (gwflow_exists(con)) {
+    message("  Writing gwflow files...")
+    write_gwflow_files(con, output_dir, v, sv)
+  }
 
   # Update timestamp
   if ("project_config" %in% tables) {
@@ -913,36 +932,42 @@ write_atmo_cli <- function(con, output_dir, version = NULL,
 #' Write all connect section files
 #' @keywords internal
 write_connect_section <- function(con, output_dir, v, sv, has_cio) {
-  # Map connect tables to their element tables and names
+  # Map connect tables to file.cio positions (1-based).
+  # The file.cio connect section has 13 entries in fixed order.
+  # Positions 4 (gwflow.con), 6 (aquifer2d.con), and 12 (outlet.con)
+  # are handled by file.cio conditions but not explicitly written here
+  # (matching Python behaviour where these positions are skipped).
   con_specs <- list(
-    list(con_tbl = "hru_con",        con_out_tbl = "hru_con_out",
+    list(cio_pos = 1,  con_tbl = "hru_con",        con_out_tbl = "hru_con_out",
          elem_name = "hru",  file = "hru.con"),
-    list(con_tbl = "hru_lte_con",    con_out_tbl = "hru_lte_con_out",
+    list(cio_pos = 2,  con_tbl = "hru_lte_con",    con_out_tbl = "hru_lte_con_out",
          elem_name = "lhru", file = "hru-lte.con"),
-    list(con_tbl = "rout_unit_con",  con_out_tbl = "rout_unit_con_out",
+    list(cio_pos = 3,  con_tbl = "rout_unit_con",  con_out_tbl = "rout_unit_con_out",
          elem_name = "rtu",  file = "rout_unit.con"),
-    list(con_tbl = "aquifer_con",    con_out_tbl = "aquifer_con_out",
+    list(cio_pos = 5,  con_tbl = "aquifer_con",    con_out_tbl = "aquifer_con_out",
          elem_name = "aqu",  file = "aquifer.con"),
-    list(con_tbl = "channel_con",    con_out_tbl = "channel_con_out",
+    list(cio_pos = 7,  con_tbl = "channel_con",    con_out_tbl = "channel_con_out",
          elem_name = "cha",  file = "channel-lte.con"),
-    list(con_tbl = "reservoir_con",  con_out_tbl = "reservoir_con_out",
+    list(cio_pos = 8,  con_tbl = "reservoir_con",  con_out_tbl = "reservoir_con_out",
          elem_name = "res",  file = "reservoir.con"),
-    list(con_tbl = "recall_con",     con_out_tbl = "recall_con_out",
+    list(cio_pos = 9,  con_tbl = "recall_con",     con_out_tbl = "recall_con_out",
          elem_name = "rec",  file = "recall.con"),
-    list(con_tbl = "exco_con",       con_out_tbl = "exco_con_out",
+    list(cio_pos = 10, con_tbl = "exco_con",       con_out_tbl = "exco_con_out",
          elem_name = "exco", file = "exco.con"),
-    list(con_tbl = "delratio_con",   con_out_tbl = "delratio_con_out",
+    list(cio_pos = 11, con_tbl = "delratio_con",   con_out_tbl = "delratio_con_out",
          elem_name = "dlr",  file = "delratio.con"),
-    list(con_tbl = "chandeg_con",    con_out_tbl = "chandeg_con_out",
+    list(cio_pos = 12, con_tbl = "outlet_con",     con_out_tbl = "outlet_con_out",
+         elem_name = "out",  file = "outlet.con"),
+    list(cio_pos = 13, con_tbl = "chandeg_con",    con_out_tbl = "chandeg_con_out",
          elem_name = "lcha", file = "chandeg.con")
   )
 
   cio_files <- if (has_cio) get_cio_file_names(con, "connect") else character(0)
 
-  for (idx in seq_along(con_specs)) {
-    spec <- con_specs[[idx]]
-    fname <- if (idx <= length(cio_files) && cio_files[idx] != "null") {
-      trimws(cio_files[idx])
+  for (spec in con_specs) {
+    pos <- spec$cio_pos
+    fname <- if (pos <= length(cio_files) && cio_files[pos] != "null") {
+      trimws(cio_files[pos])
     } else {
       spec$file
     }
@@ -1385,6 +1410,7 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
       sc("dr_pest_del") > 0, sc("dr_path_del") > 0,
       sc("dr_hmet_del") > 0, sc("dr_salt_del") > 0),
     aquifer = list(sc("initial_aqu") > 0, sc("aquifer_aqu") > 0),
+    herd = list(sc("animal_hrd") > 0, sc("herd_hrd") > 0, sc("ranch_hrd") > 0),
     water_rights = list(sc("water_allocation_wro") > 0,
                         sc("element_wro") > 0, sc("define_wro") > 0),
     link = list(sc("chan_surf_lin") > 0, sc("chan_aqu_lin") > 0),
@@ -1466,4 +1492,799 @@ write_file_cio_static <- function(file_path, version = NULL,
     writeLines(paste0(swat_string_pad(sec, align = "left"),
                       swat_string_pad(SWAT_NULL_STR, align = "left")), f)
   }
+}
+
+# ===================================================================
+# gwflow module support
+# ===================================================================
+
+#' Check if gwflow module is active
+#' @param con Database connection.
+#' @return Logical. TRUE if gwflow_base table exists and has data,
+#'   AND project_config.use_gwflow is enabled.
+#' @keywords internal
+gwflow_exists <- function(con) {
+  use_gw <- tryCatch({
+    cfg <- query_db(con, "SELECT use_gwflow FROM project_config LIMIT 1")
+    isTRUE(cfg$use_gwflow == 1)
+  }, error = function(e) FALSE)
+
+  if (!use_gw) return(FALSE)
+  has_data(con, "gwflow_base")
+}
+
+#' Update codes_bsn gwflow flag
+#'
+#' Sets codes_bsn.gwflow = 1 if gwflow module is active, 0 otherwise.
+#' Matches Python gwflow_writer.update_codes_bsn().
+#' @param con Database connection.
+#' @keywords internal
+update_gwflow_codes_bsn <- function(con) {
+  if (!has_data(con, "codes_bsn")) return(invisible(NULL))
+
+  gw_flag <- if (gwflow_exists(con)) 1L else 0L
+  tryCatch(
+    execute_db(con, "UPDATE codes_bsn SET gwflow = ?", params = list(gw_flag)),
+    error = function(e) invisible(NULL)
+  )
+}
+
+#' Write all gwflow module files
+#'
+#' Writes the gwflow input files when gwflow_base exists. This mirrors
+#' the Python \code{Gwflow_files.write()} method.
+#'
+#' @param con Database connection.
+#' @param output_dir Output directory.
+#' @param version Editor version string.
+#' @param swat_version SWAT+ version string.
+#' @keywords internal
+write_gwflow_files <- function(con, output_dir, version = NULL,
+                               swat_version = NULL) {
+  write_gwflow_input(con, output_dir, version, swat_version)
+  write_gwflow_chancells(con, output_dir, version, swat_version)
+  write_gwflow_hrucell(con, output_dir, version, swat_version)
+  write_gwflow_lsucell(con, output_dir, version, swat_version)
+  write_gwflow_rescells(con, output_dir, version, swat_version)
+  write_gwflow_floodplain(con, output_dir, version, swat_version)
+  write_gwflow_wetland(con, output_dir, version, swat_version)
+  write_gwflow_tiles(con, output_dir, version, swat_version)
+  write_gwflow_solutes(con, output_dir, version, swat_version)
+}
+
+#' Build grid index mapping cell_id -> cell data
+#' @keywords internal
+gwflow_grid_index <- function(con) {
+  base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
+  total_cells <- base$row_count * base$col_count
+
+  grid <- tryCatch(
+    query_db(con, "SELECT * FROM gwflow_grid ORDER BY cell_id"),
+    error = function(e) data.frame()
+  )
+
+  # Build lookup: cell_id -> row (or NULL)
+  grid_map <- list()
+  if (nrow(grid) > 0) {
+    for (i in seq_len(nrow(grid))) {
+      grid_map[[as.character(grid$cell_id[i])]] <- grid[i, ]
+    }
+  }
+
+  list(base = base, total_cells = total_cells, grid_map = grid_map)
+}
+
+#' Write gwflow.input file
+#' @keywords internal
+write_gwflow_input <- function(con, output_dir, version, swat_version) {
+  if (!has_data(con, "gwflow_base")) return(invisible(NULL))
+
+  gw <- gwflow_grid_index(con)
+  base <- gw$base
+  fp <- file.path(output_dir, "gwflow.input")
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(paste0(" INPUT FOR GWFLOW MODULE ",
+                    swat_meta_line(fp, version, swat_version)), f)
+
+  writeLines(" Basic information", f)
+  writeLines(" structured", f)
+  writeLines(paste0(" ", formatC(base$cell_size, format = "f", digits = 1, width = 12),
+                    " cell size (m)"), f)
+  writeLines(paste0(" ", base$row_count, " ", base$col_count,
+                    " number of rows, number of columns"), f)
+  writeLines(paste0(" ", formatC(base$boundary_conditions, format = "f", digits = 0, width = 12),
+                    " boundary condition type (1=constant head; 2=no-flow)"), f)
+  writeLines(paste0(" ", formatC(base$recharge, format = "f", digits = 0, width = 12),
+                    " recharge connection type (1=HRU-cell; 2=LSU-cell)"), f)
+  writeLines(paste0(" ", formatC(base$soil_transfer, format = "f", digits = 0, width = 12),
+                    " groundwater-->soil transfer (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$saturation_excess, format = "f", digits = 0, width = 12),
+                    " groundwater saturation excess flow (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$external_pumping, format = "f", digits = 0, width = 12),
+                    " external groundwater pumping (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$tile_drainage, format = "f", digits = 0, width = 12),
+                    " groundwater tile drainage (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$reservoir_exchange, format = "f", digits = 0, width = 12),
+                    " groundwater-reservoir exchange (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$wetland_exchange, format = "f", digits = 0, width = 12),
+                    " groundwater-wetland exchange (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$floodplain_exchange, format = "f", digits = 0, width = 12),
+                    " groundwater-floodplain exchange (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$canal_seepage, format = "f", digits = 0, width = 12),
+                    " canal seepage to groundwater (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$solute_transport, format = "f", digits = 0, width = 12),
+                    " groundwater solute transport (0=off; 1=on)"), f)
+  writeLines(paste0(" ", formatC(base$timestep_balance, format = "f", digits = 2, width = 12),
+                    " time step (days)"), f)
+  writeLines(paste0(" ", base$daily_output, " ", base$annual_output, " ", base$aa_output,
+                    " write flags (daily, annual, avg. annual)"), f)
+  writeLines(paste0(" ", formatC(1, format = "f", digits = 0, width = 12),
+                    " number of columns in output files"), f)
+
+  # Aquifer zones
+  zones <- tryCatch(
+    query_db(con, "SELECT * FROM gwflow_zone ORDER BY zone_id"),
+    error = function(e) data.frame()
+  )
+  zone_cnt <- nrow(zones)
+  zone_id_index <- list()
+  if (zone_cnt > 0) {
+    for (i in seq_len(zone_cnt)) {
+      zone_id_index[[as.character(zones$zone_id[i])]] <- i
+    }
+  }
+
+  writeLines(" Aquifer and Streambed Parameter Zones", f)
+
+  writeLines(" Aquifer Hydraulic Conductivity (m/day) Zones", f)
+  writeLines(paste0(" ", zone_cnt), f)
+  for (i in seq_len(zone_cnt)) {
+    writeLines(paste0(i, "\t", format(zones$aquifer_k[i], nsmall = 4)), f)
+  }
+
+  writeLines(" Aquifer Specific Yield Zones", f)
+  writeLines(paste0(" ", zone_cnt), f)
+  for (i in seq_len(zone_cnt)) {
+    writeLines(paste0(i, "\t", format(zones$specific_yield[i], nsmall = 4)), f)
+  }
+
+  writeLines(" Streambed Hydraulic Conductivity (m/day) Zones", f)
+  writeLines(paste0(" ", zone_cnt), f)
+  for (i in seq_len(zone_cnt)) {
+    writeLines(paste0(i, "\t", format(zones$streambed_k[i], nsmall = 4)), f)
+  }
+
+  writeLines(" Streambed Thickness (m) Zones", f)
+  writeLines(paste0(" ", zone_cnt), f)
+  for (i in seq_len(zone_cnt)) {
+    writeLines(paste0(i, "\t", format(zones$streambed_thickness[i], nsmall = 4)), f)
+  }
+
+  # Grid cell information
+  writeLines(" Grid Cell Information", f)
+
+  status_lines <- "Cell Status (0=inactive; 1=active; 2=boundary)\n"
+  elevation_lines <- "Ground Surface Elevation (m)\n"
+  thickness_lines <- "Aquifer Thickness(m)\n"
+  zone_k_lines <- "Hydraulic conductivity zone\n"
+  zone_yld_lines <- "Specific yield zone\n"
+  recharge_lines <- "Recharge delay(Days)\n"
+  et_lines <- "Groundwater ET Extinction Depth (m)\t\n"
+  init_head_lines <- "Initial Groundwater Head (m)\n"
+
+  col_count <- base$col_count
+  col <- 1
+  for (cell_id in seq_len(gw$total_cells)) {
+    if (col == col_count + 1) {
+      status_lines <- paste0(status_lines, "\n")
+      elevation_lines <- paste0(elevation_lines, "\n")
+      thickness_lines <- paste0(thickness_lines, "\n")
+      zone_k_lines <- paste0(zone_k_lines, "\n")
+      zone_yld_lines <- paste0(zone_yld_lines, "\n")
+      recharge_lines <- paste0(recharge_lines, "\n")
+      et_lines <- paste0(et_lines, "\n")
+      init_head_lines <- paste0(init_head_lines, "\n")
+      col <- 1
+    }
+
+    cell <- gw$grid_map[[as.character(cell_id)]]
+    if (is.null(cell)) {
+      status_lines <- paste0(status_lines, "0\t")
+      elevation_lines <- paste0(elevation_lines, "0.00\t")
+      thickness_lines <- paste0(thickness_lines, "0.00\t")
+      zone_k_lines <- paste0(zone_k_lines, "0\t")
+      zone_yld_lines <- paste0(zone_yld_lines, "0\t")
+      recharge_lines <- paste0(recharge_lines,
+        formatC(base$recharge_delay, format = "f", digits = 2), "\t")
+      et_lines <- paste0(et_lines, "0.00\t")
+      init_head_lines <- paste0(init_head_lines, "0.00\t")
+    } else {
+      zone_idx <- zone_id_index[[as.character(cell$zone)]]
+      if (is.null(zone_idx)) zone_idx <- 0L
+      status_lines <- paste0(status_lines, cell$status, "\t")
+      elevation_lines <- paste0(elevation_lines,
+        formatC(cell$elevation, format = "f", digits = 2), "\t")
+      thickness_lines <- paste0(thickness_lines,
+        formatC(cell$aquifer_thickness, format = "f", digits = 2), "\t")
+      zone_k_lines <- paste0(zone_k_lines, zone_idx, "\t")
+      zone_yld_lines <- paste0(zone_yld_lines, zone_idx, "\t")
+      recharge_lines <- paste0(recharge_lines,
+        formatC(base$recharge_delay, format = "f", digits = 2), "\t")
+      et_lines <- paste0(et_lines,
+        formatC(cell$extinction_depth, format = "f", digits = 2), "\t")
+      init_head_lines <- paste0(init_head_lines,
+        formatC(cell$initial_head, format = "f", digits = 2), "\t")
+    }
+    col <- col + 1
+  }
+  if (!endsWith(status_lines, "\n")) {
+    status_lines <- paste0(status_lines, "\n")
+    elevation_lines <- paste0(elevation_lines, "\n")
+    thickness_lines <- paste0(thickness_lines, "\n")
+    zone_k_lines <- paste0(zone_k_lines, "\n")
+    zone_yld_lines <- paste0(zone_yld_lines, "\n")
+    recharge_lines <- paste0(recharge_lines, "\n")
+    et_lines <- paste0(et_lines, "\n")
+    init_head_lines <- paste0(init_head_lines, "\n")
+  }
+
+  cat(status_lines, file = f)
+  cat(elevation_lines, file = f)
+  cat(thickness_lines, file = f)
+  cat(zone_k_lines, file = f)
+  cat(zone_yld_lines, file = f)
+  cat(recharge_lines, file = f)
+  cat(et_lines, file = f)
+  cat(init_head_lines, file = f)
+
+  # Output days
+  writeLines(" Times for Groundwater Head Output", f)
+  out_days <- tryCatch(
+    query_db(con, "SELECT * FROM gwflow_out_days ORDER BY year, jday"),
+    error = function(e) data.frame()
+  )
+  writeLines(paste0("\t\t", nrow(out_days)), f)
+  if (nrow(out_days) > 0) {
+    for (i in seq_len(nrow(out_days))) {
+      writeLines(paste0(swat_int_pad(out_days$year[i]), " ",
+                        swat_int_pad(out_days$jday[i])), f)
+    }
+  }
+
+  # Observation locations
+  writeLines(" Groundwater Observation Locations", f)
+  obs_locs <- tryCatch(
+    query_db(con, "SELECT * FROM gwflow_obs_locs"),
+    error = function(e) data.frame()
+  )
+  writeLines(paste0("\t\t", nrow(obs_locs)), f)
+  if (nrow(obs_locs) > 0) {
+    for (i in seq_len(nrow(obs_locs))) {
+      writeLines(as.character(obs_locs$cell_id[i]), f)
+    }
+  }
+
+  # Daily output cell
+  writeLines(" Cell for detailed daily sources/sink output", f)
+  row_det <- base$daily_output_row
+  col_det <- base$daily_output_col
+  cell_det <- 0L
+  if (!is.null(row_det) && !is.null(col_det) && row_det > 0 && col_det > 0) {
+    cell_det <- (row_det - 1L) * col_count + col_det
+  }
+  writeLines(paste0(" ", cell_det), f)
+
+  # River cell information
+  writeLines(" River Cell Information", f)
+  writeLines(paste0(" ", formatC(base$river_depth, format = "f", digits = 2)), f)
+}
+
+#' Write gwflow.chancells file
+#' @keywords internal
+write_gwflow_chancells <- function(con, output_dir, version, swat_version) {
+  if (!has_data(con, "gwflow_rivcell")) return(invisible(NULL))
+
+  fp <- file.path(output_dir, "gwflow.chancells")
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(paste0(" Cell-Channel Connection Information ",
+                    swat_meta_line(fp, version, swat_version)), f)
+  writeLines("", f)
+
+  # Header
+  writeLines(paste0(
+    swat_int_pad("ID"),
+    swat_num_pad("elev_m"),
+    swat_int_pad("channel"),
+    swat_num_pad("riv_length_m"),
+    swat_int_pad("zone")
+  ), f)
+  writeLines("", f)
+
+  # Build channel GIS-to-con index
+  chan_idx <- gwflow_gis_to_con_index(con, "chandeg_con")
+
+  cells <- tryCatch(
+    query_db(con,
+      "SELECT r.cell_id, g.elevation, r.channel, r.length_m, g.zone
+       FROM gwflow_rivcell r
+       JOIN gwflow_grid g ON r.cell_id = g.cell_id
+       ORDER BY r.cell_id"),
+    error = function(e) data.frame()
+  )
+  for (i in seq_len(nrow(cells))) {
+    row <- cells[i, ]
+    chan_con <- chan_idx[[as.character(row$channel)]]
+    if (is.null(chan_con)) chan_con <- 0L
+    writeLines(paste0(
+      swat_int_pad(row$cell_id),
+      swat_num_pad(row$elevation, decimals = 2),
+      swat_int_pad(chan_con),
+      swat_num_pad(row$length_m, decimals = 2),
+      swat_int_pad(row$zone)
+    ), f)
+  }
+}
+
+#' Write gwflow.hrucell and gwflow.cellhru files
+#' @keywords internal
+write_gwflow_hrucell <- function(con, output_dir, version, swat_version) {
+  if (!has_data(con, "gwflow_hrucell")) return(invisible(NULL))
+
+  base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
+  recharge_type <- base$recharge
+  if (!(recharge_type %in% c(1, 3))) return(invisible(NULL))
+
+  hru_idx <- gwflow_gis_to_con_index(con, "hru_con")
+
+  cells <- tryCatch(
+    query_db(con,
+      "SELECT h.cell_id, h.hru, h.area_m2,
+              g.elevation, COALESCE(gis.arslp, 0) as arslp
+       FROM gwflow_hrucell h
+       JOIN gwflow_grid g ON h.cell_id = g.cell_id
+       LEFT JOIN gis_hrus gis ON h.hru = gis.id
+       ORDER BY h.hru, h.cell_id"),
+    error = function(e) data.frame()
+  )
+  if (nrow(cells) == 0) return(invisible(NULL))
+
+  # gwflow.hrucell
+  fp1 <- file.path(output_dir, "gwflow.hrucell")
+  f1 <- file(fp1, "w")
+  on.exit(close(f1), add = TRUE)
+
+  writeLines(paste0(" HRU-Cell Connection Information ",
+                    swat_meta_line(fp1, version, swat_version)), f1)
+  writeLines("", f1)
+  writeLines(" HRUs that are connected to cells", f1)
+
+  hru_ids <- sort(unique(cells$hru))
+  writeLines(as.character(length(hru_ids)), f1)
+  for (hid in hru_ids) {
+    hcon <- hru_idx[[as.character(hid)]]
+    if (is.null(hcon)) hcon <- 0L
+    writeLines(as.character(hcon), f1)
+  }
+  writeLines("", f1)
+
+  writeLines(paste0(
+    swat_int_pad("hru"),
+    swat_num_pad("area_m2"),
+    swat_int_pad("cell_id"),
+    swat_num_pad("overlap_m2")
+  ), f1)
+  writeLines("", f1)
+
+  for (i in seq_len(nrow(cells))) {
+    row <- cells[i, ]
+    hcon <- hru_idx[[as.character(row$hru)]]
+    if (is.null(hcon)) hcon <- 0L
+    writeLines(paste0(
+      swat_int_pad(hcon),
+      swat_num_pad(row$arslp * 10000, decimals = 2),
+      swat_int_pad(row$cell_id),
+      swat_num_pad(row$area_m2, decimals = 2)
+    ), f1)
+  }
+
+  # gwflow.cellhru
+  fp2 <- file.path(output_dir, "gwflow.cellhru")
+  f2 <- file(fp2, "w")
+  on.exit(close(f2), add = TRUE)
+
+  writeLines(paste0(" Cell-HRU Connection Information ",
+                    swat_meta_line(fp2, version, swat_version)), f2)
+  writeLines("", f2)
+
+  num_intersect <- length(unique(cells$cell_id))
+  writeLines(paste0(num_intersect, "\t\t\tNumber of cells that intersect HRUs"), f2)
+
+  writeLines(paste0(
+    swat_int_pad("cell_id"),
+    swat_int_pad("hru"),
+    swat_num_pad("cell_area"),
+    swat_num_pad("overlap_m2")
+  ), f2)
+  writeLines("", f2)
+
+  cell_area <- base$cell_size * base$cell_size
+  cells_by_cell <- cells[order(cells$cell_id), ]
+  for (i in seq_len(nrow(cells_by_cell))) {
+    row <- cells_by_cell[i, ]
+    hcon <- hru_idx[[as.character(row$hru)]]
+    if (is.null(hcon)) hcon <- 0L
+    writeLines(paste0(
+      swat_int_pad(row$cell_id),
+      swat_int_pad(hcon),
+      swat_num_pad(cell_area, decimals = 2),
+      swat_num_pad(row$area_m2, decimals = 2)
+    ), f2)
+  }
+}
+
+#' Write gwflow.lsucell file
+#' @keywords internal
+write_gwflow_lsucell <- function(con, output_dir, version, swat_version) {
+  if (!has_data(con, "gwflow_lsucell")) return(invisible(NULL))
+
+  base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
+  if (!(base$recharge %in% c(2, 3))) return(invisible(NULL))
+
+  lsu_idx <- gwflow_gis_to_con_index(con, "rout_unit_con")
+
+  cells <- tryCatch(
+    query_db(con,
+      "SELECT l.cell_id, l.lsu, l.area_m2,
+              COALESCE(gis.area, 0) as lsu_area
+       FROM gwflow_lsucell l
+       LEFT JOIN gis_lsus gis ON l.lsu = gis.id
+       ORDER BY l.cell_id"),
+    error = function(e) data.frame()
+  )
+  if (nrow(cells) == 0) return(invisible(NULL))
+
+  fp <- file.path(output_dir, "gwflow.lsucell")
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(paste0(" LSU (landscape unit) - Cell Connection Information ",
+                    swat_meta_line(fp, version, swat_version)), f)
+
+  total_lsu <- safe_count(con, "gis_lsus")
+  unique_lsu <- sort(unique(cells$lsu))
+  writeLines(paste0(total_lsu, "\t\t total number of landscape units in model"), f)
+  writeLines(paste0(length(unique_lsu),
+                    "\t\t number of landscape units connected to grid cells"), f)
+  for (lid in unique_lsu) {
+    lcon <- lsu_idx[[as.character(lid)]]
+    if (is.null(lcon)) lcon <- 0L
+    writeLines(as.character(lcon), f)
+  }
+  writeLines("", f)
+
+  writeLines("connection information between landscape units and grid cells", f)
+  writeLines(paste0(
+    swat_int_pad("lsu_id"),
+    swat_num_pad("lsu_area_m2"),
+    swat_int_pad("cell_id"),
+    swat_num_pad("area_m2")
+  ), f)
+  writeLines("", f)
+
+  for (i in seq_len(nrow(cells))) {
+    row <- cells[i, ]
+    lcon <- lsu_idx[[as.character(row$lsu)]]
+    if (is.null(lcon)) lcon <- 0L
+    writeLines(paste0(
+      swat_int_pad(lcon),
+      swat_num_pad(row$lsu_area * 10000, decimals = 2),
+      swat_int_pad(row$cell_id),
+      swat_num_pad(row$area_m2, decimals = 2)
+    ), f)
+  }
+}
+
+#' Write gwflow.rescells file
+#' @keywords internal
+write_gwflow_rescells <- function(con, output_dir, version, swat_version) {
+  if (!has_data(con, "gwflow_rescell")) return(invisible(NULL))
+
+  base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
+  if (!isTRUE(base$reservoir_exchange == 1)) return(invisible(NULL))
+
+  res_idx <- gwflow_gis_to_con_index(con, "reservoir_con")
+
+  cells <- tryCatch(
+    query_db(con,
+      "SELECT r.cell_id, r.res_id, r.res_stage
+       FROM gwflow_rescell r
+       JOIN gwflow_grid g ON r.cell_id = g.cell_id
+       ORDER BY r.cell_id"),
+    error = function(e) data.frame()
+  )
+  if (nrow(cells) == 0) return(invisible(NULL))
+
+  fp <- file.path(output_dir, "gwflow.rescells")
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(paste0(" Cell-Reservoir Connection Information ",
+                    swat_meta_line(fp, version, swat_version)), f)
+  writeLines(" Reservoir bed parameters", f)
+  writeLines(paste0(" ", base$resbed_thickness, "\t\t bed thickness (m)"), f)
+  writeLines(paste0(" ", base$resbed_k, "\t\t bed conductivity (m/day)"), f)
+  writeLines(paste0(" ", nrow(cells),
+                    "\t\t number of cells connected to reservoirs"), f)
+
+  writeLines(paste0(
+    swat_int_pad("cell_id"),
+    swat_int_pad("res_id"),
+    swat_num_pad("res_stage_m")
+  ), f)
+  writeLines("", f)
+
+  for (i in seq_len(nrow(cells))) {
+    row <- cells[i, ]
+    rcon <- res_idx[[as.character(row$res_id)]]
+    if (is.null(rcon)) rcon <- 0L
+    writeLines(paste0(
+      swat_int_pad(row$cell_id),
+      swat_int_pad(rcon),
+      swat_num_pad(row$res_stage, decimals = 2)
+    ), f)
+  }
+}
+
+#' Write gwflow.floodplain file
+#' @keywords internal
+write_gwflow_floodplain <- function(con, output_dir, version, swat_version) {
+  if (!has_data(con, "gwflow_fpcell")) return(invisible(NULL))
+
+  base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
+  if (!isTRUE(base$floodplain_exchange == 1)) return(invisible(NULL))
+
+  chan_idx <- gwflow_gis_to_con_index(con, "chandeg_con")
+
+  cells <- tryCatch(
+    query_db(con,
+      "SELECT f.cell_id, f.channel_id, f.area_m2
+       FROM gwflow_fpcell f
+       JOIN gwflow_grid g ON f.cell_id = g.cell_id
+       ORDER BY f.cell_id"),
+    error = function(e) data.frame()
+  )
+  if (nrow(cells) == 0) return(invisible(NULL))
+
+  fp <- file.path(output_dir, "gwflow.floodplain")
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(paste0(
+    "gwflow floodplain cells (optional file; list cells that interact with channels, ",
+    "when channel water is in the floodplain) ",
+    swat_meta_line(fp, version, swat_version)), f)
+
+  # Filter to valid channel connections
+  valid_lines <- character(0)
+  for (i in seq_len(nrow(cells))) {
+    row <- cells[i, ]
+    ccon <- chan_idx[[as.character(row$channel_id)]]
+    if (is.null(ccon)) next
+    valid_lines <- c(valid_lines, paste0(
+      swat_int_pad(row$cell_id),
+      swat_int_pad(ccon),
+      swat_num_pad(0, decimals = 4),
+      swat_num_pad(row$area_m2, decimals = 2)
+    ))
+  }
+
+  writeLines(paste0(length(valid_lines),
+                    "\t\t\t\t\tNumber of floodplain cells"), f)
+  writeLines(paste0(
+    swat_int_pad("cell_id"),
+    swat_int_pad("chan_id"),
+    swat_num_pad("fp_K"),
+    swat_num_pad("area_m2")
+  ), f)
+  writeLines("", f)
+  for (line in valid_lines) writeLines(line, f)
+}
+
+#' Write gwflow.wetland file
+#' @keywords internal
+write_gwflow_wetland <- function(con, output_dir, version, swat_version) {
+  base <- tryCatch(
+    query_db(con, "SELECT * FROM gwflow_base LIMIT 1"),
+    error = function(e) data.frame()
+  )
+  if (nrow(base) == 0 || !isTRUE(base$wetland_exchange == 1))
+    return(invisible(NULL))
+
+  fp <- file.path(output_dir, "gwflow.wetland")
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(paste0("gwflow.wetland: parameters for groundwater-wetland interactions ",
+                    swat_meta_line(fp, version, swat_version)), f)
+  writeLines("wet_id = same as id listed in wetland.wet", f)
+  writeLines("thick_m = thickness (in meters) of wetland bottom material", f)
+  writeLines("(hydraulic conductivity is listed in hydrology.wet)", f)
+
+  writeLines(paste0(swat_int_pad("wet_id"), swat_num_pad("thick_m")), f)
+  writeLines("", f)
+
+  wet_thick <- list()
+  if (has_data(con, "gwflow_wetland")) {
+    wt <- query_db(con, "SELECT wet_id, thickness FROM gwflow_wetland ORDER BY wet_id")
+    for (i in seq_len(nrow(wt))) {
+      wet_thick[[as.character(wt$wet_id[i])]] <- wt$thickness[i]
+    }
+  }
+
+  if (has_data(con, "wetland_wet")) {
+    wets <- query_db(con, "SELECT id FROM wetland_wet ORDER BY id")
+    default_thick <- base$wet_thickness
+    for (i in seq_len(nrow(wets))) {
+      wid <- wets$id[i]
+      thick <- wet_thick[[as.character(wid)]]
+      if (is.null(thick)) thick <- default_thick
+      writeLines(paste0(
+        swat_int_pad(wid),
+        swat_num_pad(thick, decimals = 2)
+      ), f)
+    }
+  }
+}
+
+#' Write gwflow.tiles file
+#' @keywords internal
+write_gwflow_tiles <- function(con, output_dir, version, swat_version) {
+  base <- tryCatch(
+    query_db(con, "SELECT * FROM gwflow_base LIMIT 1"),
+    error = function(e) data.frame()
+  )
+  if (nrow(base) == 0 || !isTRUE(base$tile_drainage == 1))
+    return(invisible(NULL))
+
+  gw <- gwflow_grid_index(con)
+  fp <- file.path(output_dir, "gwflow.tiles")
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(paste0("gwflow tile drain information ",
+                    swat_meta_line(fp, version, swat_version)), f)
+  writeLines(paste0(" ", swat_num_pad(base$tile_depth, decimals = 5),
+                    "\t\t Depth (m) of tiles below ground surface"), f)
+  writeLines(paste0(" ", swat_num_pad(base$tile_area, decimals = 5),
+                    "\t\t Area (m2) of groundwater inflow * flow length"), f)
+  writeLines(paste0(" ", swat_num_pad(base$tile_k, decimals = 5),
+                    "\t\t Hydraulic conductivity (m/day) of the drain perimeter"), f)
+  tile_groups <- if (!is.null(base$tile_groups)) base$tile_groups else 0L
+  writeLines(paste0(" ", swat_int_pad(tile_groups, pad = SWAT_NUM_PAD),
+                    "\t\t Tile cell groups (flag: 0=no; 1=yes)"), f)
+
+  status_lines <- "gwflow tile cells (0=no tile; 1=tiles are present)\n"
+  col_count <- base$col_count
+  col <- 1
+  for (cell_id in seq_len(gw$total_cells)) {
+    if (col == col_count + 1) {
+      status_lines <- paste0(status_lines, "\n")
+      col <- 1
+    }
+    cell <- gw$grid_map[[as.character(cell_id)]]
+    tile_val <- if (is.null(cell) || is.null(cell$tile)) 0L else cell$tile
+    status_lines <- paste0(status_lines, tile_val, "\t")
+    col <- col + 1
+  }
+  if (!endsWith(status_lines, "\n")) {
+    status_lines <- paste0(status_lines, "\n")
+  }
+  cat(status_lines, file = f)
+}
+
+#' Write gwflow.solutes file
+#' @keywords internal
+write_gwflow_solutes <- function(con, output_dir, version, swat_version) {
+  base <- tryCatch(
+    query_db(con, "SELECT * FROM gwflow_base LIMIT 1"),
+    error = function(e) data.frame()
+  )
+  if (nrow(base) == 0 || !isTRUE(base$solute_transport == 1))
+    return(invisible(NULL))
+
+  if (!has_data(con, "gwflow_solutes")) return(invisible(NULL))
+
+  fp <- file.path(output_dir, "gwflow.solutes")
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(paste0("solute parameters and initial concentrations ",
+                    swat_meta_line(fp, version, swat_version)), f)
+  writeLines("general parameters", f)
+  writeLines(paste0(" ", base$transport_steps,
+                    "\t\t number of transport time steps for flow time step"), f)
+  writeLines(paste0(" ", base$disp_coef,
+                    "\t\t dispersion coefficient (m2/day)"), f)
+
+  writeLines("solute parameters: name,sorption,rate constant,canal_irrig (one row per active solute)", f)
+
+  solutes <- query_db(con, "SELECT * FROM gwflow_solutes")
+  for (i in seq_len(nrow(solutes))) {
+    sol <- solutes[i, ]
+    writeLines(paste0(
+      swat_string_pad(sol$solute_name, pad = 8, align = "left"),
+      swat_num_pad(sol$sorption, decimals = 2),
+      swat_num_pad(sol$rate_const, decimals = 4),
+      swat_num_pad(sol$canal_irr, decimals = 2)
+    ), f)
+  }
+
+  writeLines("initial concentrations (g/m3)", f)
+  for (i in seq_len(nrow(solutes))) {
+    sol <- solutes[i, ]
+    writeLines(sol$solute_name, f)
+    writeLines(sol$init_data, f)
+    if (identical(sol$init_data, "single")) {
+      writeLines(formatC(sol$init_conc, format = "f", digits = 2), f)
+    } else {
+      gw <- gwflow_grid_index(con)
+      solute_col <- paste0("init_",
+        if (sol$solute_name == "no3-n") "no3" else sol$solute_name)
+      grid_text <- gwflow_write_grid_column(con, gw, solute_col)
+      cat(grid_text, file = f)
+    }
+  }
+}
+
+#' Build GIS ID to connection index mapping
+#' @keywords internal
+gwflow_gis_to_con_index <- function(con, con_table) {
+  idx <- list()
+  rows <- tryCatch(
+    query_db(con, paste0("SELECT id, gis_id FROM ", con_table, " ORDER BY id")),
+    error = function(e) data.frame()
+  )
+  if (nrow(rows) > 0) {
+    for (i in seq_len(nrow(rows))) {
+      idx[[as.character(rows$gis_id[i])]] <- i
+    }
+  }
+  idx
+}
+
+#' Write a grid column for gwflow_init_conc
+#' @keywords internal
+gwflow_write_grid_column <- function(con, gw, column_name) {
+  conc_data <- tryCatch(
+    query_db(con, paste0("SELECT cell_id, ", column_name,
+                         " FROM gwflow_init_conc ORDER BY cell_id")),
+    error = function(e) data.frame()
+  )
+
+  conc_map <- list()
+  if (nrow(conc_data) > 0) {
+    for (i in seq_len(nrow(conc_data))) {
+      conc_map[[as.character(conc_data$cell_id[i])]] <- conc_data[[column_name]][i]
+    }
+  }
+
+  result <- ""
+  base <- gw$base
+  col <- 1
+  for (cell_id in seq_len(gw$total_cells)) {
+    if (col == base$col_count + 1) {
+      result <- paste0(result, "\n")
+      col <- 1
+    }
+    val <- conc_map[[as.character(cell_id)]]
+    if (is.null(val)) val <- 0
+    result <- paste0(result, formatC(val, format = "f", digits = 2), "\t")
+    col <- col + 1
+  }
+  if (!endsWith(result, "\n")) result <- paste0(result, "\n")
+  result
 }
