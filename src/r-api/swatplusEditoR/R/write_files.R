@@ -284,7 +284,8 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "sediment_cha", file = "sediment.cha"),
     list(tbl = "nutrients_cha", file = "nutrients.cha"),
     list(tbl = "channel_lte_cha", file = "channel-lte.cha"),
-    list(tbl = "hyd_sed_lte_cha", file = "hyd-sed-lte.cha")
+    list(tbl = "hyd_sed_lte_cha", file = "hyd-sed-lte.cha"),
+    list(tbl = "temperature_cha", file = "temperature.cha")
   ))
 
   # ---- RESERVOIR section ----
@@ -320,7 +321,11 @@ write_direct <- function(project, output_dir, swat_version = "60",
   # ---- DR section ----
   write_table_section(con, output_dir, v, sv, has_cio, "dr", list(
     list(tbl = "delratio_del", file = "delratio.del"),
-    list(tbl = "dr_om_del", file = "dr.del")
+    list(tbl = "dr_om_del", file = "dr.del"),
+    list(tbl = "dr_pest_del", file = "dr_pest.del"),
+    list(tbl = "dr_path_del", file = "dr_path.del"),
+    list(tbl = "dr_hmet_del", file = "dr_hmet.del"),
+    list(tbl = "dr_salt_del", file = "dr_salt.del")
   ))
 
   # ---- AQUIFER section ----
@@ -332,7 +337,15 @@ write_direct <- function(project, output_dir, swat_version = "60",
 
   # ---- WATER RIGHTS section ----
   write_table_section(con, output_dir, v, sv, has_cio, "water_rights", list(
-    list(tbl = "water_allocation_wro", file = "water_allocation.wro")
+    list(tbl = "water_allocation_wro", file = "water_allocation.wro"),
+    list(tbl = "element_wro", file = "element.wro"),
+    list(tbl = "define_wro", file = "define.wro")
+  ))
+
+  # ---- LINK section ----
+  write_table_section(con, output_dir, v, sv, has_cio, "link", list(
+    list(tbl = "chan_surf_lin", file = "chan-surf.lin"),
+    list(tbl = "chan_aqu_lin", file = "chan-aqu.lin")
   ))
 
   # ---- BASIN section ----
@@ -432,7 +445,11 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "pest_hru_ini", file = "pest_hru.ini"),
     list(tbl = "pest_water_ini", file = "pest_water.ini"),
     list(tbl = "path_hru_ini", file = "path_hru.ini"),
-    list(tbl = "path_water_ini", file = "path_water.ini")
+    list(tbl = "path_water_ini", file = "path_water.ini"),
+    list(tbl = "hmet_hru_ini", file = "hmet_hru.ini"),
+    list(tbl = "hmet_water_ini", file = "hmet_water.ini"),
+    list(tbl = "salt_hru_ini", file = "salt_hru.ini"),
+    list(tbl = "salt_water_ini", file = "salt_water.ini")
   ))
 
   # ---- SOILS section ----
@@ -1348,7 +1365,7 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
       sc("initial_cha") > 0, sc("channel_cha") > 0,
       sc("hydrology_cha") > 0, sc("sediment_cha") > 0,
       sc("nutrients_cha") > 0, sc("channel_lte_cha") > 0,
-      sc("hyd_sed_lte_cha") > 0, FALSE),
+      sc("hyd_sed_lte_cha") > 0, sc("temperature_cha") > 0),
     reservoir = list(
       sc("initial_res") > 0, sc("reservoir_res") > 0,
       sc("hydrology_res") > 0, sc("sediment_res") > 0,
@@ -1368,8 +1385,9 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
       sc("dr_pest_del") > 0, sc("dr_path_del") > 0,
       sc("dr_hmet_del") > 0, sc("dr_salt_del") > 0),
     aquifer = list(sc("initial_aqu") > 0, sc("aquifer_aqu") > 0),
-    water_rights = list(sc("water_allocation_wro") > 0, FALSE, FALSE),
-    link = list(sc("chan_surf_lin") > 0, FALSE),
+    water_rights = list(sc("water_allocation_wro") > 0,
+                        sc("element_wro") > 0, sc("define_wro") > 0),
+    link = list(sc("chan_surf_lin") > 0, sc("chan_aqu_lin") > 0),
     hydrology = list(
       sc("hydrology_hyd") > 0, sc("topography_hyd") > 0,
       sc("field_fld") > 0),
@@ -1400,7 +1418,9 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
       sc("plant_ini") > 0, sc("soil_plant_ini") > 0,
       sc("om_water_ini") > 0, sc("pest_hru_ini") > 0,
       sc("pest_water_ini") > 0, sc("path_hru_ini") > 0,
-      sc("path_water_ini") > 0, FALSE, FALSE, FALSE, FALSE),
+      sc("path_water_ini") > 0, sc("hmet_hru_ini") > 0,
+      sc("hmet_water_ini") > 0, sc("salt_hru_ini") > 0,
+      sc("salt_water_ini") > 0),
     soils = list(
       !is_lte && sc("soils_sol") > 0,
       sc("nutrients_sol") > 0,

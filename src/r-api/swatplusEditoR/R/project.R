@@ -673,6 +673,11 @@ ensure_write_tables <- function(con) {
       wd REAL, dp REAL, slp REAL, len REAL, mann REAL,
       k REAL, cov_fact REAL, wd_rto REAL, eq_slp REAL, d50 REAL
     )")
+  create_if_missing("
+    CREATE TABLE IF NOT EXISTS temperature_cha (
+      id INTEGER PRIMARY KEY, name TEXT,
+      lat REAL, lon REAL, elev REAL
+    )")
 
   # ==================================================================
   # 6. Reservoir tables
@@ -807,11 +812,17 @@ ensure_write_tables <- function(con) {
   # ==================================================================
   create_if_missing("CREATE TABLE IF NOT EXISTS water_allocation_wro (
     id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS element_wro (
+    id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS define_wro (
+    id INTEGER PRIMARY KEY, name TEXT)")
 
   # ==================================================================
   # 12. Link tables
   # ==================================================================
   create_if_missing("CREATE TABLE IF NOT EXISTS chan_surf_lin (
+    id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS chan_aqu_lin (
     id INTEGER PRIMARY KEY, name TEXT)")
 
   # ==================================================================
@@ -980,6 +991,14 @@ ensure_write_tables <- function(con) {
     id INTEGER PRIMARY KEY, name TEXT)")
   create_if_missing("CREATE TABLE IF NOT EXISTS path_water_ini (
     id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS hmet_hru_ini (
+    id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS hmet_water_ini (
+    id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS salt_hru_ini (
+    id INTEGER PRIMARY KEY, name TEXT)")
+  create_if_missing("CREATE TABLE IF NOT EXISTS salt_water_ini (
+    id INTEGER PRIMARY KEY, name TEXT)")
 
   # ==================================================================
   # 23. Soils tables
@@ -1113,13 +1132,13 @@ ensure_write_tables <- function(con) {
                                 "filterstrip.str", "grassedww.str",
                                 "bmpuser.str"))
     add_files("hru_parm_db", c("plants.plt", "fertilizer.frt", "tillage.til",
-                                 "pesticide.pes", "pathogens.pth",
+                                 "pesticide.pst", "pathogens.pth",
                                  "metals.mtl", "salts.slt", "urban.urb",
                                  "septic.sep", "snow.sno"))
     add_files("ops", c("harv.ops", "graze.ops", "irr.ops",
                          "chem_app.ops", "fire.ops", "sweep.ops"))
     add_files("lum", c("landuse.lum", "management.sch", "cntable.lum",
-                         "cons_practice.lum", "ovn_table.lum"))
+                         "cons_prac.lum", "ovn_table.lum"))
     add_files("chg", c("cal_parms.cal", "calibration.cal", "codes.sft",
                          "wb_parms.sft", "water_balance.sft",
                          "ch_sed_budget.sft", "ch_sed_parms.sft",
