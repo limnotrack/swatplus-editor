@@ -4,12 +4,10 @@
 \alias{create_project_db}
 \title{Create a new SWAT+ project database}
 \usage{
-create_project_db(project, db_path, overwrite = FALSE)
+create_project_db(project, overwrite = FALSE)
 }
 \arguments{
 \item{project}{List. A project object.}
-
-\item{db_path}{Character. Path where the SQLite database will be created.}
 
 \item{overwrite}{Logical. If TRUE, overwrite an existing database.}
 }
