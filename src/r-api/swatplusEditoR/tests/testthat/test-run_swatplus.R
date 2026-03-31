@@ -1,6 +1,7 @@
 # Tests for run_swatplus() and swatplus_exe()
 
 # Helper: build a full project with rQSWATPlus + ERA5 weather
+library(testthat)
 setup_swat_sim <- function() {
   skip_if_not_installed("rQSWATPlus")
 
@@ -93,7 +94,7 @@ test_that("run_swatplus executes SWAT+ simulation", {
                      weather_dir = era5_dir)
 
   result <- run_swatplus(swat_exe = exe, working_dir = output_dir,
-                         verbose = FALSE)
+                         verbose = TRUE)
 
   expect_true(result$success)
   expect_equal(result$status, 0L)
