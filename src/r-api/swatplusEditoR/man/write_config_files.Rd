@@ -8,9 +8,7 @@ write_config_files(
   project,
   output_dir = NULL,
   swat_version = "60",
-  weather_dir = NULL,
-  editor_exe = NULL,
-  api_url = NULL
+  weather_dir = NULL
 )
 }
 \arguments{

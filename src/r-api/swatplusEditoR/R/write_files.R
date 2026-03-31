@@ -34,18 +34,16 @@
 #' }
 write_config_files <- function(project, output_dir = NULL,
                                swat_version = "60",
-                               weather_dir = NULL,
-                               editor_exe = NULL,
-                               api_url = NULL) {
+                               weather_dir = NULL) {
   validate_project(project)
-
+  
   if (is.null(output_dir)) {
     output_dir <- file.path(project$project_dir, "TxtInOut")
   }
   if (!dir.exists(output_dir)) {
     dir.create(output_dir, recursive = TRUE)
   }
-
+  
   # Update output dir in project config
   con <- open_project_db(project$db_file)
   if (table_exists(con, "project_config")) {
@@ -58,95 +56,14 @@ write_config_files <- function(project, output_dir = NULL,
       output_dir
     }
     execute_db(con,
-      "UPDATE project_config SET input_files_dir = ?",
-      params = list(rel_path))
+               "UPDATE project_config SET input_files_dir = ?",
+               params = list(rel_path))
   }
   close_db(con)
-
-  # Optional fallbacks to external tools
-  if (!is.null(editor_exe)) {
-    return(write_via_exe(project, editor_exe, output_dir, swat_version))
-  }
-  if (!is.null(api_url) && api_server_available(api_url)) {
-    return(write_via_api(project, api_url))
-  }
-
+  
   # Primary path: write all files natively in R
   write_direct(project, output_dir, swat_version, weather_dir)
 }
-
-#' Write configuration files via SWAT+ Editor executable
-#' @param project Project list object.
-#' @param editor_exe Path to swatplus_api.py or compiled executable.
-#' @param output_dir Output directory for files.
-#' @param swat_version SWAT+ version string.
-#' @return The project object (invisibly).
-#' @keywords internal
-write_via_exe <- function(project, editor_exe, output_dir, swat_version) {
-  if (!file.exists(editor_exe)) {
-    stop("SWAT+ Editor executable not found: ", editor_exe, call. = FALSE)
-  }
-  is_python <- grepl("\\.py$", editor_exe)
-  cmd <- if (is_python) paste("python", shQuote(editor_exe)) else shQuote(editor_exe)
-  args <- paste("--action write",
-                "--project_db_file", shQuote(project$db_file),
-                "--swat_version", shQuote(swat_version))
-  message("Writing SWAT+ input files via editor...")
-  system(paste(cmd, args), intern = TRUE)
-
-  con <- open_project_db(project$db_file)
-  on.exit(close_db(con))
-  if (table_exists(con, "project_config")) {
-    execute_db(con, "UPDATE project_config SET input_files_last_written = datetime('now')")
-  }
-  message("SWAT+ input files written to: ", output_dir)
-  invisible(project)
-}
-
-#' Check if SWAT+ Editor API server is available
-#' @param api_url API base URL.
-#' @return Logical. TRUE if server responds.
-#' @keywords internal
-api_server_available <- function(api_url) {
-  tryCatch({
-    if (requireNamespace("httr", quietly = TRUE)) {
-      resp <- httr::GET(paste0(api_url, "/setup/config"), httr::timeout(2))
-      return(httr::status_code(resp) < 500)
-    }
-    FALSE
-  }, error = function(e) FALSE)
-}
-
-#' Write configuration files via running API server
-#' @param project Project list object.
-#' @param api_url API base URL.
-#' @return The project object (invisibly).
-#' @keywords internal
-write_via_api <- function(project, api_url) {
-  if (!requireNamespace("httr", quietly = TRUE)) {
-    stop("Package 'httr' is required for API server communication. ",
-         "Install with: install.packages('httr')", call. = FALSE)
-  }
-  message("Writing SWAT+ input files via API server...")
-  resp <- httr::GET(paste0(api_url, "/setup/run-settings"),
-                    httr::add_headers("Project-Db" = project$db_file))
-  if (httr::status_code(resp) != 200) {
-    stop("Failed to get run settings from API: ",
-         httr::content(resp, "text"), call. = FALSE)
-  }
-  resp <- httr::PUT(paste0(api_url, "/setup/run-settings"),
-                    httr::add_headers("Project-Db" = project$db_file),
-                    body = httr::content(resp, "parsed"), encode = "json")
-  if (httr::status_code(resp) != 200) {
-    warning("API write returned status: ", httr::status_code(resp), call. = FALSE)
-  }
-  message("SWAT+ input files written via API")
-  invisible(project)
-}
-
-# ===================================================================
-# Primary R-native file writing
-# ===================================================================
 
 #' Write all SWAT+ configuration files directly from the database
 #'
@@ -163,15 +80,15 @@ write_via_api <- function(project, api_url) {
 write_direct <- function(project, output_dir, swat_version = "60",
                          weather_dir = NULL) {
   message("Writing SWAT+ input files from database...")
-
+  
   con <- open_project_db(project$db_file)
   on.exit(close_db(con))
-
+  
   # Ensure all required tables exist with sensible defaults
   ensure_write_tables(con)
-
+  
   tables <- list_db_tables(con)
-
+  
   # Read project config
   is_lte <- FALSE
   weather_data_format <- "observed"
@@ -182,7 +99,9 @@ write_direct <- function(project, output_dir, swat_version = "60",
     if (nrow(cfg) > 0) {
       is_lte <- isTRUE(cfg$is_lte == 1)
       if ("weather_data_format" %in% names(cfg))
-        weather_data_format <- cfg$weather_data_format
+        if (!is.na(cfg$weather_data_format)) {
+          weather_data_format <- cfg$weather_data_format
+        }
       if ("editor_version" %in% names(cfg))
         version <- cfg$editor_version
       if (is.null(weather_dir) && "weather_data_dir" %in% names(cfg) &&
@@ -196,13 +115,13 @@ write_direct <- function(project, output_dir, swat_version = "60",
       }
     }
   }
-
+  
   v <- version
   sv <- swat_version
-
+  
   # Update codes_bsn gwflow flag (matches Python gwflow_writer.update_codes_bsn())
   update_gwflow_codes_bsn(con)
-
+  
   # Helper to get file names from file_cio table
   get_files <- function(section, n) {
     fnames <- get_cio_file_names(con, section)
@@ -212,10 +131,10 @@ write_direct <- function(project, output_dir, swat_version = "60",
     }
     fnames
   }
-
+  
   # Determine if file_cio table exists (full SWAT+ Editor database)
   has_cio <- "file_cio" %in% tables && "file_cio_classification" %in% tables
-
+  
   # ---- SIMULATION section ----
   message("  Writing simulation files...")
   if (has_cio) {
@@ -237,7 +156,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     if ("object_cnt" %in% tables) write_object_cnt(con, output_dir, v, sv)
     if ("constituents_cs" %in% tables) write_constituents_cs(con, output_dir, v, sv)
   }
-
+  
   # ---- CLIMATE section ----
   message("  Writing climate files...")
   if (has_cio) {
@@ -258,20 +177,21 @@ write_direct <- function(project, output_dir, swat_version = "60",
     if ("weather_wgn_cli" %in% tables) write_weather_wgn(con, output_dir, v, sv)
     if ("atmo_cli" %in% tables) write_atmo_cli(con, output_dir, v, sv)
   }
-
+  
   # Copy weather files
   copy_weather_files(con, output_dir, weather_dir, weather_data_format)
-
+  
   # ---- CONNECT section (13 files) ----
   message("  Writing connect files...")
   write_connect_section(con, output_dir, v, sv, has_cio)
-
+  
   # ---- CHANNEL section ----
   message("  Writing channel files...")
-  write_table_section(con, output_dir, v, sv, has_cio, "channel", list(
-    list(tbl = "initial_cha", file = "initial.cha"),
-    list(tbl = "channel_cha", file = "channel-lte.cha",
-         query = "SELECT c.id, c.name,
+  write_table_section(con, output_dir, v, sv, has_cio, section = "channel",
+                      specs =  list(
+                        list(tbl = "initial_cha", file = "initial.cha"),
+                        list(tbl = "channel_cha", file = "channel-lte.cha",
+                             query = "SELECT c.id, c.name,
                     COALESCE(i.name, 'null') as init,
                     COALESCE(h.name, 'null') as hyd,
                     COALESCE(s.name, 'null') as sed,
@@ -282,15 +202,15 @@ write_direct <- function(project, output_dir, swat_version = "60",
                   LEFT JOIN sediment_cha s ON c.sed_id = s.id
                   LEFT JOIN nutrients_cha n ON c.nut_id = n.id
                   ORDER BY c.id"),
-    list(tbl = "hydrology_cha", file = "hydrology.cha",
-         non_zero_min = c("wd", "dp", "slp", "len", "fps")),
-    list(tbl = "sediment_cha", file = "sediment.cha"),
-    list(tbl = "nutrients_cha", file = "nutrients.cha"),
-    list(tbl = "channel_lte_cha", file = "channel-lte.cha"),
-    list(tbl = "hyd_sed_lte_cha", file = "hyd-sed-lte.cha"),
-    list(tbl = "temperature_cha", file = "temperature.cha")
-  ))
-
+                        list(tbl = "hydrology_cha", file = "hydrology.cha",
+                             non_zero_min = c("wd", "dp", "slp", "len", "fps")),
+                        list(tbl = "sediment_cha", file = "sediment.cha"),
+                        list(tbl = "nutrients_cha", file = "nutrients.cha"),
+                        list(tbl = "channel_lte_cha", file = "channel-lte.cha"),
+                        list(tbl = "hyd_sed_lte_cha", file = "hyd-sed-lte.cha"),
+                        list(tbl = "temperature_cha", file = "temperature.cha")
+                      ))
+  
   # ---- RESERVOIR section ----
   message("  Writing reservoir files...")
   write_table_section(con, output_dir, v, sv, has_cio, "reservoir", list(
@@ -303,7 +223,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "wetland_wet", file = "wetland.wet"),
     list(tbl = "hydrology_wet", file = "hydrology.wet")
   ))
-
+  
   # ---- ROUTING UNIT section ----
   message("  Writing routing unit files...")
   write_table_section(con, output_dir, v, sv, has_cio, "routing_unit", list(
@@ -313,14 +233,14 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "rout_unit_rtu", file = "rout_unit.rtu"),
     list(tbl = "rout_unit_dr", file = "rout_unit.dr")
   ))
-
+  
   # ---- HRU section ----
   message("  Writing HRU files...")
   write_table_section(con, output_dir, v, sv, has_cio, "hru", list(
     list(tbl = "hru_data_hru", file = "hru-data.hru"),
     list(tbl = "hru_lte_hru", file = "hru-lte.hru")
   ))
-
+  
   # ---- DR section ----
   write_table_section(con, output_dir, v, sv, has_cio, "dr", list(
     list(tbl = "delratio_del", file = "delratio.del"),
@@ -330,14 +250,14 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "dr_hmet_del", file = "dr_hmet.del"),
     list(tbl = "dr_salt_del", file = "dr_salt.del")
   ))
-
+  
   # ---- AQUIFER section ----
   message("  Writing aquifer files...")
   write_table_section(con, output_dir, v, sv, has_cio, "aquifer", list(
     list(tbl = "initial_aqu", file = "initial.aqu"),
     list(tbl = "aquifer_aqu", file = "aquifer.aqu")
   ))
-
+  
   # ---- HERD section ----
   # Stub matching Python write_herd() which is also a pass/stub.
   # The file.cio section exists (animal.hrd, herd.hrd, ranch.hrd)
@@ -347,27 +267,27 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "herd_hrd", file = "herd.hrd"),
     list(tbl = "ranch_hrd", file = "ranch.hrd")
   ))
-
+  
   # ---- WATER RIGHTS section ----
   write_table_section(con, output_dir, v, sv, has_cio, "water_rights", list(
     list(tbl = "water_allocation_wro", file = "water_allocation.wro"),
     list(tbl = "element_wro", file = "element.wro"),
     list(tbl = "define_wro", file = "define.wro")
   ))
-
+  
   # ---- LINK section ----
   write_table_section(con, output_dir, v, sv, has_cio, "link", list(
     list(tbl = "chan_surf_lin", file = "chan-surf.lin"),
     list(tbl = "chan_aqu_lin", file = "chan-aqu.lin")
   ))
-
+  
   # ---- BASIN section ----
   message("  Writing basin files...")
   write_table_section(con, output_dir, v, sv, has_cio, "basin", list(
     list(tbl = "codes_bsn", file = "codes.bsn", ignore_id = TRUE),
     list(tbl = "parameters_bsn", file = "parameters.bsn", ignore_id = TRUE)
   ))
-
+  
   # ---- HYDROLOGY section ----
   message("  Writing hydrology files...")
   write_table_section(con, output_dir, v, sv, has_cio, "hydrology", list(
@@ -375,7 +295,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "topography_hyd", file = "topography.hyd"),
     list(tbl = "field_fld", file = "field.fld", ignore_id = TRUE)
   ))
-
+  
   # ---- EXCO section ----
   write_table_section(con, output_dir, v, sv, has_cio, "exco", list(
     list(tbl = "exco_exc", file = "exco.exc"),
@@ -385,13 +305,13 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "exco_hmet_exc", file = "exco_hmet.exc"),
     list(tbl = "exco_salt_exc", file = "exco_salt.exc")
   ))
-
+  
   # ---- RECALL section ----
   message("  Writing recall files...")
   if (has_data(con, "recall_rec")) {
     write_recall_rec(con, output_dir, v, sv)
   }
-
+  
   # ---- STRUCTURAL section ----
   write_table_section(con, output_dir, v, sv, has_cio, "structural", list(
     list(tbl = "tiledrain_str", file = "tiledrain.str"),
@@ -400,7 +320,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "grassedww_str", file = "grassedww.str"),
     list(tbl = "bmpuser_str", file = "bmpuser.str")
   ))
-
+  
   # ---- HRU PARM DB section ----
   message("  Writing parameter database files...")
   write_table_section(con, output_dir, v, sv, has_cio, "hru_parm_db", list(
@@ -415,7 +335,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "septic_sep", file = "septic.sep"),
     list(tbl = "snow_sno", file = "snow.sno")
   ))
-
+  
   # ---- OPS section ----
   write_table_section(con, output_dir, v, sv, has_cio, "ops", list(
     list(tbl = "harv_ops", file = "harv.ops"),
@@ -425,7 +345,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "fire_ops", file = "fire.ops"),
     list(tbl = "sweep_ops", file = "sweep.ops")
   ))
-
+  
   # ---- LUM section ----
   message("  Writing land use management files...")
   write_table_section(con, output_dir, v, sv, has_cio, "lum", list(
@@ -435,7 +355,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "cons_prac_lum", file = "cons_prac.lum"),
     list(tbl = "ovn_table_lum", file = "ovn_table.lum")
   ))
-
+  
   # ---- CHG section ----
   write_table_section(con, output_dir, v, sv, has_cio, "chg", list(
     list(tbl = "cal_parms_cal", file = "cal_parms.cal", write_count = TRUE),
@@ -448,7 +368,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "plant_parms_sft", file = "plant_parms.sft"),
     list(tbl = "plant_gro_sft", file = "plant_gro.sft")
   ))
-
+  
   # ---- INIT section ----
   message("  Writing initial condition files...")
   write_table_section(con, output_dir, v, sv, has_cio, "init", list(
@@ -464,7 +384,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "salt_hru_ini", file = "salt_hru.ini"),
     list(tbl = "salt_water_ini", file = "salt_water.ini")
   ))
-
+  
   # ---- SOILS section ----
   message("  Writing soils files...")
   write_table_section(con, output_dir, v, sv, has_cio, "soils", list(
@@ -473,13 +393,13 @@ write_direct <- function(project, output_dir, swat_version = "60",
          non_zero_min = c("exp_co")),
     list(tbl = "soils_lte_sol", file = "soils_lte.sol", ignore_id = TRUE)
   ))
-
+  
   # ---- DECISION TABLE section ----
   message("  Writing decision table files...")
   if (has_data(con, "d_table_dtl")) {
     write_decision_tables(con, output_dir, v, sv)
   }
-
+  
   # ---- REGIONS section ----
   message("  Writing region files...")
   write_table_section(con, output_dir, v, sv, has_cio, "regions", list(
@@ -501,24 +421,24 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "rec_catunit_def", file = "rec_catunit.def"),
     list(tbl = "rec_reg_def", file = "rec_reg.def")
   ))
-
+  
   # ---- file.cio (master index) ----
   message("  Writing file.cio...")
   write_file_cio(con, output_dir, v, sv, is_lte, weather_data_format)
-
+  
   # ---- GWFLOW files (if gwflow module is active) ----
   if (gwflow_exists(con)) {
     message("  Writing gwflow files...")
     write_gwflow_files(con, output_dir, v, sv)
   }
-
+  
   # Update timestamp
   if ("project_config" %in% tables) {
     execute_db(con, paste0(
       "UPDATE project_config SET input_files_last_written = datetime('now'),",
       " swat_last_run = NULL, output_last_imported = NULL"))
   }
-
+  
   message("SWAT+ input files written to: ", output_dir)
   invisible(project)
 }
@@ -542,12 +462,12 @@ write_section_file <- function(con, file_name, output_dir, v, sv,
 write_table_section <- function(con, output_dir, v, sv, has_cio,
                                 section, specs) {
   cio_files <- if (has_cio) get_cio_file_names(con, section) else character(0)
-
+  
   for (idx in seq_along(specs)) {
     spec <- specs[[idx]]
     tbl <- spec$tbl
     if (is.null(tbl)) next
-
+    
     # Determine output file name
     fname <- if (idx <= length(cio_files) && cio_files[idx] != "null") {
       trimws(cio_files[idx])
@@ -555,16 +475,19 @@ write_table_section <- function(con, output_dir, v, sv, has_cio,
       spec$file
     }
     if (is.null(fname) || fname == "null" || fname == "") next
-
+    
     # Check table exists and has data
-    if (!has_data(con, tbl)) next
-
+    if (!has_data(con, tbl)) {
+      cli::cli_alert_warning("  - Skipping {fname} (table '{tbl}' is empty or missing)")
+      next
+    }
+    
     query_tbl <- if (!is.null(spec$query_tbl)) spec$query_tbl else NULL
     custom_query <- if (!is.null(spec$query)) spec$query else NULL
     ignore_id <- isTRUE(spec$ignore_id)
     write_cnt <- isTRUE(spec$write_count)
     nzm <- if (!is.null(spec$non_zero_min)) spec$non_zero_min else character(0)
-
+    
     # Use custom query or default table
     actual_tbl <- if (!is.null(query_tbl)) query_tbl else tbl
     swat_write_table(con, actual_tbl,
@@ -601,14 +524,14 @@ write_time_sim <- function(con, output_dir, version = NULL,
 write_print_prt <- function(con, output_dir, version = NULL,
                             swat_version = NULL, file_name = "print.prt") {
   if (!has_data(con, "print_prt")) return(invisible(NULL))
-
+  
   row <- query_db(con, "SELECT * FROM print_prt LIMIT 1")
   fp <- file.path(output_dir, file_name)
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(fp, version, swat_version), f)
-
+  
   # Time settings row
   writeLines(paste0(
     swat_int_pad(row$nyskip, pad = 10),
@@ -618,25 +541,25 @@ write_print_prt <- function(con, output_dir, version = NULL,
     swat_int_pad(row$yrc_end),
     swat_int_pad(row$interval)
   ), f)
-
+  
   # AA intervals
   aa_ints <- if (!is.null(row$aa_ints) && !is.na(row$aa_ints) &&
                  nchar(row$aa_ints) > 0) {
     as.integer(strsplit(as.character(row$aa_ints), ",")[[1]])
   } else integer(0)
-
+  
   writeLines(paste0(swat_int_pad("aa_int_cnt", pad = 10)), f)
   aa_line <- swat_int_pad(length(aa_ints), pad = 10)
   for (ai in aa_ints) aa_line <- paste0(aa_line, swat_int_pad(ai))
   writeLines(aa_line, f)
-
+  
   # Output format
   writeLines(paste0(
     swat_bool_pad(row$csvout),
     swat_bool_pad(row$dbout),
     swat_bool_pad(row$cdfout)
   ), f)
-
+  
   # Extra options
   crop_yld <- if (!is.null(row$crop_yld)) row$crop_yld else "n"
   writeLines(paste0(
@@ -645,7 +568,7 @@ write_print_prt <- function(con, output_dir, version = NULL,
     swat_bool_pad(row$hydcon),
     swat_bool_pad(row$fdcout)
   ), f)
-
+  
   # Print objects
   if (has_data(con, "print_prt_object")) {
     objects <- query_db(con, "SELECT * FROM print_prt_object ORDER BY id")
@@ -686,14 +609,14 @@ write_object_prt <- function(con, output_dir, version = NULL,
 write_object_cnt <- function(con, output_dir, version = NULL,
                              swat_version = NULL, file_name = "object.cnt") {
   if (!has_data(con, "object_cnt")) return(invisible(NULL))
-
+  
   row <- query_db(con, "SELECT * FROM object_cnt LIMIT 1")
   fp <- file.path(output_dir, file_name)
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(fp, version, swat_version), f)
-
+  
   # Header
   hdr <- paste0(
     swat_string_pad("name", align = "left"),
@@ -706,7 +629,7 @@ write_object_cnt <- function(con, output_dir, version = NULL,
     swat_int_pad("aqu2d"), swat_int_pad("hrd"), swat_int_pad("wro")
   )
   writeLines(hdr, f)
-
+  
   # Dynamic counts from con tables
   hru_cnt  <- safe_count(con, "hru_con")
   lhru_cnt <- safe_count(con, "hru_lte_con")
@@ -727,24 +650,24 @@ write_object_cnt <- function(con, output_dir, version = NULL,
   out_cnt  <- safe_count(con, "outlet_con")
   lcha_cnt <- safe_count(con, "chandeg_con")
   aqu2d_cnt <- safe_count(con, "aquifer2d_con")
-
+  
   ls_area <- tryCatch(
     query_db(con, "SELECT COALESCE(SUM(area), 0) as s FROM ls_unit_def")$s[1],
     error = function(e) 0)
   tot_area <- tryCatch(
     query_db(con, "SELECT COALESCE(SUM(area), 0) as s FROM rout_unit_con")$s[1],
     error = function(e) 0)
-
+  
   name_val <- gsub("\\W", "", row$name)
   can_v <- if (!is.null(row$can)) row$can else 0L
   pmp_v <- if (!is.null(row$pmp)) row$pmp else 0L
   hrd_v <- if (!is.null(row$hrd)) row$hrd else 0L
   wro_v <- if (!is.null(row$wro)) row$wro else 0L
-
+  
   obj_tot <- hru_cnt + lhru_cnt + rtu_cnt + mfl_cnt + aqu_cnt + cha_cnt +
     res_cnt + rec_cnt + exco_cnt + dlr_cnt + out_cnt + lcha_cnt + aqu2d_cnt +
     can_v + pmp_v + hrd_v + wro_v
-
+  
   writeLines(paste0(
     swat_string_pad(name_val, align = "left"),
     swat_num_pad(ls_area), swat_num_pad(tot_area),
@@ -767,7 +690,7 @@ write_constituents_cs <- function(con, output_dir, version = NULL,
                                   swat_version = NULL,
                                   file_name = "constituents.cs") {
   if (!has_data(con, "constituents_cs")) return(invisible(NULL))
-
+  
   row <- query_db(con, "SELECT * FROM constituents_cs LIMIT 1")
   pest <- if (!is.null(row$pest_coms) && !is.na(row$pest_coms) &&
               nchar(row$pest_coms) > 0) sort(strsplit(row$pest_coms, ",")[[1]]) else character(0)
@@ -777,22 +700,22 @@ write_constituents_cs <- function(con, output_dir, version = NULL,
               nchar(row$hmet_coms) > 0) sort(strsplit(row$hmet_coms, ",")[[1]]) else character(0)
   salt <- if (!is.null(row$salt_coms) && !is.na(row$salt_coms) &&
               nchar(row$salt_coms) > 0) sort(strsplit(row$salt_coms, ",")[[1]]) else character(0)
-
+  
   if (length(pest) == 0 && length(path) == 0 &&
       length(hmet) == 0 && length(salt) == 0) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, file_name)
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(fp, version, swat_version), f)
-
+  
   write_constit <- function(items, label) {
     cnt_str <- sprintf("%6d", length(items))
     writeLines(paste0(cnt_str, "              ", sprintf("%-16s  ", paste0("!", label))), f)
     writeLines(paste0("        ", paste(items, collapse = " ")), f)
   }
-
+  
   write_constit(pest, "pesticides")
   write_constit(path, "pathogens")
   write_constit(hmet, "metals")
@@ -805,7 +728,7 @@ write_weather_sta_cli <- function(con, output_dir, version = NULL,
                                   swat_version = NULL,
                                   file_name = "weather-sta.cli") {
   if (!has_data(con, "weather_sta_cli")) return(invisible(NULL))
-
+  
   # Join with wgn to get wgn name
   sql <- "SELECT s.name, COALESCE(w.name, 'null') as wgn,
                  s.pcp, s.tmp, s.slr, s.hmd, s.wnd, s.pet, s.atmo_dep
@@ -818,13 +741,13 @@ write_weather_sta_cli <- function(con, output_dir, version = NULL,
                    FROM weather_sta_cli ORDER BY id")
   })
   if (nrow(stations) == 0) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, file_name)
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(fp, version, swat_version), f)
-
+  
   # Header
   writeLines(paste0(
     swat_string_pad("name", align = "left"),
@@ -837,7 +760,7 @@ write_weather_sta_cli <- function(con, output_dir, version = NULL,
     swat_string_pad("pet"),
     swat_string_pad("atmo_dep")
   ), f)
-
+  
   for (i in seq_len(nrow(stations))) {
     s <- stations[i, ]
     na_to_null <- function(x) if (is.na(x) || is.null(x)) SWAT_NULL_STR else x
@@ -861,21 +784,21 @@ write_weather_wgn <- function(con, output_dir, version = NULL,
                               swat_version = NULL,
                               file_name = "weather-wgn.cli") {
   if (!has_data(con, "weather_wgn_cli")) return(invisible(NULL))
-
+  
   stations <- query_db(con, "SELECT * FROM weather_wgn_cli ORDER BY id")
   fp <- file.path(output_dir, file_name)
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(fp, version, swat_version), f)
-
+  
   mon_cols <- c("tmp_max_ave", "tmp_min_ave", "tmp_max_sd", "tmp_min_sd",
                 "pcp_ave", "pcp_sd", "pcp_skew", "wet_dry", "wet_wet",
                 "pcp_days", "pcp_hhr", "slr_ave", "dew_ave", "wnd_ave")
-
+  
   for (i in seq_len(nrow(stations))) {
     sta <- stations[i, ]
-
+    
     # Station header
     writeLines(paste0(
       swat_string_pad("name", align = "left"),
@@ -887,19 +810,19 @@ write_weather_wgn <- function(con, output_dir, version = NULL,
       swat_num_pad(sta$lat), swat_num_pad(sta$lon),
       swat_num_pad(sta$elev), swat_num_pad(sta$rain_yrs)
     ), f)
-
+    
     # Monthly data header
     hdr <- paste0(swat_int_pad("month"))
     for (mc in mon_cols) hdr <- paste0(hdr, swat_num_pad(mc))
     writeLines(hdr, f)
-
+    
     # Monthly data
     mon_data <- tryCatch(
       query_db(con, "SELECT * FROM weather_wgn_cli_mon
                      WHERE weather_wgn_cli_id = ? ORDER BY month",
                params = list(sta$id)),
       error = function(e) data.frame())
-
+    
     if (nrow(mon_data) > 0) {
       for (m in seq_len(nrow(mon_data))) {
         md <- mon_data[m, ]
@@ -919,7 +842,7 @@ write_weather_wgn <- function(con, output_dir, version = NULL,
 write_atmo_cli <- function(con, output_dir, version = NULL,
                            swat_version = NULL, file_name = "atmo.cli") {
   if (!has_data(con, "atmo_cli")) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, file_name)
   swat_write_table(con, "atmo_cli", fp,
                    version = version, swat_version = swat_version)
@@ -961,9 +884,9 @@ write_connect_section <- function(con, output_dir, v, sv, has_cio) {
     list(cio_pos = 13, con_tbl = "chandeg_con",    con_out_tbl = "chandeg_con_out",
          elem_name = "lcha", file = "chandeg.con")
   )
-
+  
   cio_files <- if (has_cio) get_cio_file_names(con, "connect") else character(0)
-
+  
   for (spec in con_specs) {
     pos <- spec$cio_pos
     fname <- if (pos <= length(cio_files) && cio_files[pos] != "null") {
@@ -973,7 +896,7 @@ write_connect_section <- function(con, output_dir, v, sv, has_cio) {
     }
     if (is.null(fname) || fname == "null") next
     if (!has_data(con, spec$con_tbl)) next
-
+    
     write_connect_file(con, spec$con_tbl, spec$con_out_tbl,
                        spec$elem_name,
                        file.path(output_dir, fname), v, sv)
@@ -986,7 +909,7 @@ write_connect_file <- function(con, con_tbl, con_out_tbl, elem_name,
                                file_path, version, swat_version) {
   # Check if con_out table exists
   has_con_out <- has_data(con, con_out_tbl)
-
+  
   # Get connection data with weather station name
   sql <- paste0(
     "SELECT c.id, c.name, c.gis_id, c.area, c.lat, c.lon, c.elev, ",
@@ -1000,12 +923,12 @@ write_connect_file <- function(con, con_tbl, con_out_tbl, elem_name,
              error = function(e2) data.frame())
   })
   if (nrow(cons) == 0) return(invisible(NULL))
-
+  
   f <- file(file_path, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(file_path, version, swat_version), f)
-
+  
   # Header
   hdr <- paste0(
     swat_int_pad("id"),
@@ -1024,28 +947,28 @@ write_connect_file <- function(con, con_tbl, con_out_tbl, elem_name,
   )
   if (has_con_out) {
     hdr <- paste0(hdr,
-      swat_string_pad("obj_typ", pad = SWAT_CODE_PAD),
-      swat_int_pad("obj_id"),
-      swat_string_pad("hyd_typ", pad = SWAT_CODE_PAD),
-      swat_num_pad("frac")
+                  swat_string_pad("obj_typ", pad = SWAT_CODE_PAD),
+                  swat_int_pad("obj_id"),
+                  swat_string_pad("hyd_typ", pad = SWAT_CODE_PAD),
+                  swat_num_pad("frac")
     )
   }
   writeLines(hdr, f)
-
+  
   # Get element ID column name
   elem_id_col <- paste0(elem_name, "_id")
-
+  
   # Data rows
   for (i in seq_len(nrow(cons))) {
     c_row <- cons[i, ]
     elem_id <- if (elem_id_col %in% names(c_row)) c_row[[elem_id_col]] else i
     if (is.null(elem_id) || is.na(elem_id)) elem_id <- i
-
+    
     wst <- if ("wst" %in% names(c_row)) c_row$wst else SWAT_NULL_STR
     cst_id <- if ("cst_id" %in% names(c_row)) c_row$cst_id else 0L
     ovfl <- if ("ovfl" %in% names(c_row)) c_row$ovfl else 0L
     rule <- if ("rule" %in% names(c_row)) c_row$rule else 0L
-
+    
     # Get outflows for this connection
     outs <- if (has_con_out) {
       tryCatch(
@@ -1055,9 +978,9 @@ write_connect_file <- function(con, con_tbl, con_out_tbl, elem_name,
                  params = list(c_row$id)),
         error = function(e) data.frame())
     } else data.frame()
-
+    
     out_tot <- nrow(outs)
-
+    
     line <- paste0(
       swat_int_pad(i),
       swat_string_pad(c_row$name, align = "left"),
@@ -1073,15 +996,15 @@ write_connect_file <- function(con, con_tbl, con_out_tbl, elem_name,
       swat_int_pad(rule),
       swat_int_pad(out_tot)
     )
-
+    
     if (out_tot > 0) {
       for (j in seq_len(out_tot)) {
         o <- outs[j, ]
         line <- paste0(line,
-          swat_string_pad(o$obj_typ, pad = SWAT_CODE_PAD),
-          swat_int_pad(o$obj_id),
-          swat_string_pad(o$hyd_typ, pad = SWAT_CODE_PAD),
-          swat_num_pad(o$frac)
+                       swat_string_pad(o$obj_typ, pad = SWAT_CODE_PAD),
+                       swat_int_pad(o$obj_id),
+                       swat_string_pad(o$hyd_typ, pad = SWAT_CODE_PAD),
+                       swat_num_pad(o$frac)
         )
       }
     }
@@ -1099,28 +1022,28 @@ write_recall_rec <- function(con, output_dir, version = NULL,
                              swat_version = NULL) {
   recs <- query_db(con, "SELECT * FROM recall_rec ORDER BY id")
   if (nrow(recs) == 0) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, "recall.rec")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(fp, version, swat_version), f)
-
+  
   for (i in seq_len(nrow(recs))) {
     rec <- recs[i, ]
-
+    
     # Get data for this recall
     dat <- tryCatch(
       query_db(con, "SELECT * FROM recall_dat WHERE recall_rec_id = ? ORDER BY id",
                params = list(rec$id)),
       error = function(e) data.frame())
-
+    
     writeLines(paste0(
       swat_int_pad(i),
       swat_string_pad(rec$name, align = "left"),
       swat_int_pad(rec$rec_typ)
     ), f)
-
+    
     if (nrow(dat) > 0) {
       # Write data rows
       for (d in seq_len(nrow(dat))) {
@@ -1153,23 +1076,23 @@ write_decision_tables <- function(con, output_dir, version, swat_version) {
   file_names <- tryCatch(
     query_db(con, "SELECT DISTINCT file_name FROM d_table_dtl ORDER BY file_name"),
     error = function(e) data.frame(file_name = character(0)))
-
+  
   for (fn in file_names$file_name) {
     if (is.na(fn) || fn == "" || fn == "null") next
-
+    
     tables <- query_db(con,
-      "SELECT * FROM d_table_dtl WHERE file_name = ? ORDER BY id",
-      params = list(fn))
-
+                       "SELECT * FROM d_table_dtl WHERE file_name = ? ORDER BY id",
+                       params = list(fn))
+    
     fp <- file.path(output_dir, fn)
     f <- file(fp, "w")
     on.exit(close(f), add = TRUE)
-
+    
     writeLines(swat_meta_line(fp, version, swat_version), f)
-
+    
     for (t in seq_len(nrow(tables))) {
       tbl <- tables[t, ]
-
+      
       # Get conditions and actions
       conds <- tryCatch(
         query_db(con, "SELECT * FROM d_table_dtl_cond WHERE d_table_dtl_id = ? ORDER BY id",
@@ -1179,7 +1102,7 @@ write_decision_tables <- function(con, output_dir, version, swat_version) {
         query_db(con, "SELECT * FROM d_table_dtl_act WHERE d_table_dtl_id = ? ORDER BY id",
                  params = list(tbl$id)),
         error = function(e) data.frame())
-
+      
       # Table header
       writeLines(paste0(
         swat_string_pad(tbl$name, align = "left"),
@@ -1187,7 +1110,7 @@ write_decision_tables <- function(con, output_dir, version, swat_version) {
         swat_int_pad(0), # alts placeholder
         swat_int_pad(nrow(acts))
       ), f)
-
+      
       # Conditions
       if (nrow(conds) > 0) {
         for (ci in seq_len(nrow(conds))) {
@@ -1202,7 +1125,7 @@ write_decision_tables <- function(con, output_dir, version, swat_version) {
           ), f)
         }
       }
-
+      
       # Actions
       if (nrow(acts) > 0) {
         for (ai in seq_len(nrow(acts))) {
@@ -1233,14 +1156,14 @@ copy_weather_files <- function(con, output_dir, weather_dir,
   if (is.null(weather_dir) || !dir.exists(weather_dir)) return(invisible(NULL))
   if (normalizePath(weather_dir, mustWork = FALSE) ==
       normalizePath(output_dir, mustWork = FALSE)) return(invisible(NULL))
-
+  
   if (weather_data_format == "netcdf") {
     message("  Skipping weather file copy (using NetCDF format)")
     return(invisible(NULL))
   }
-
+  
   message("  Copying weather files from: ", weather_dir)
-
+  
   # Copy standard cli files
   for (ext in c("hmd.cli", "pcp.cli", "slr.cli", "tmp.cli", "wnd.cli")) {
     src <- file.path(weather_dir, ext)
@@ -1248,7 +1171,7 @@ copy_weather_files <- function(con, output_dir, weather_dir,
       file.copy(src, file.path(output_dir, ext), overwrite = TRUE)
     }
   }
-
+  
   # Copy individual weather files listed in weather_file table
   if (has_data(con, "weather_file")) {
     wfiles <- query_db(con, "SELECT filename FROM weather_file")
@@ -1282,7 +1205,7 @@ write_file_cio <- function(con, output_dir, version = NULL,
                            swat_version = NULL, is_lte = FALSE,
                            weather_data_format = "observed") {
   fp <- file.path(output_dir, "file.cio")
-
+  
   # Try database-driven approach
   if (has_data(con, "file_cio_classification") && has_data(con, "file_cio")) {
     write_file_cio_from_db(con, fp, version, swat_version,
@@ -1298,27 +1221,27 @@ write_file_cio_from_db <- function(con, file_path, version, swat_version,
                                    is_lte, weather_data_format) {
   is_netcdf <- identical(weather_data_format, "netcdf")
   classifications <- get_file_cio_conditions(con, is_lte, is_netcdf)
-
+  
   classes <- query_db(con,
-    "SELECT * FROM file_cio_classification ORDER BY id")
+                      "SELECT * FROM file_cio_classification ORDER BY id")
   files <- query_db(con,
-    "SELECT * FROM file_cio ORDER BY order_in_class")
-
+                    "SELECT * FROM file_cio ORDER BY order_in_class")
+  
   f <- file(file_path, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(file_path, version, swat_version), f)
-
+  
   for (ci in seq_len(nrow(classes))) {
     cls <- classes[ci, ]
     cls_name <- cls$name
     conditions <- classifications[[cls_name]]
-
+    
     line <- swat_string_pad(cls_name, align = "left")
-
+    
     # Get files for this classification
     cls_files <- files[files$classification_id == cls$id, ]
-
+    
     if (nrow(cls_files) == 0) {
       line <- paste0(line, swat_string_pad(SWAT_NULL_STR, align = "left"))
     } else {
@@ -1332,23 +1255,23 @@ write_file_cio_from_db <- function(con, file_path, version, swat_version,
         } else {
           FALSE
         }
-
+        
         fname <- if (isTRUE(cond_met)) {
           fn <- cf$file_name
           if (is.null(fn) || is.na(fn) || fn == "") SWAT_NULL_STR else fn
         } else {
           SWAT_NULL_STR
         }
-
+        
         # NetCDF: replace weather-sta.cli with netcdf.ncw
         if (is_netcdf && cls_name == "climate" && order_idx == 1) {
           fname <- "netcdf.ncw"
         }
-
+        
         line <- paste0(line, swat_string_pad(fname, align = "left"))
       }
     }
-
+    
     writeLines(line, f)
   }
 }
@@ -1358,12 +1281,12 @@ write_file_cio_from_db <- function(con, file_path, version, swat_version,
 get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
   # Helper for safe count
   sc <- function(tbl) safe_count(con, tbl)
-
+  
   gwflow_on <- tryCatch({
     cfg <- query_db(con, "SELECT * FROM codes_bsn LIMIT 1")
     isTRUE(cfg$gwflow == 1)
   }, error = function(e) FALSE)
-
+  
   list(
     simulation = list(TRUE, TRUE, sc("object_prt") > 0, TRUE,
                       sc("constituents_cs") > 0),
@@ -1478,16 +1401,16 @@ write_file_cio_static <- function(file_path, version = NULL,
                                   swat_version = NULL) {
   f <- file(file_path, "w")
   on.exit(close(f))
-
+  
   writeLines(swat_meta_line(file_path, version, swat_version), f)
-
+  
   sections <- c(
     "simulation", "basin", "climate", "connect", "channel", "reservoir",
     "routing_unit", "hru", "exco", "recall", "dr", "aquifer", "hrd",
     "water_rights", "link", "hydrology", "structural", "hru_parm_db",
     "ops", "lum", "chg", "init", "soils", "decision_table", "regions"
   )
-
+  
   for (sec in sections) {
     writeLines(paste0(swat_string_pad(sec, align = "left"),
                       swat_string_pad(SWAT_NULL_STR, align = "left")), f)
@@ -1508,7 +1431,7 @@ gwflow_exists <- function(con) {
     cfg <- query_db(con, "SELECT use_gwflow FROM project_config LIMIT 1")
     isTRUE(cfg$use_gwflow == 1)
   }, error = function(e) FALSE)
-
+  
   if (!use_gw) return(FALSE)
   has_data(con, "gwflow_base")
 }
@@ -1521,7 +1444,7 @@ gwflow_exists <- function(con) {
 #' @keywords internal
 update_gwflow_codes_bsn <- function(con) {
   if (!has_data(con, "codes_bsn")) return(invisible(NULL))
-
+  
   gw_flag <- if (gwflow_exists(con)) 1L else 0L
   tryCatch(
     execute_db(con, "UPDATE codes_bsn SET gwflow = ?", params = list(gw_flag)),
@@ -1557,12 +1480,12 @@ write_gwflow_files <- function(con, output_dir, version = NULL,
 gwflow_grid_index <- function(con) {
   base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
   total_cells <- base$row_count * base$col_count
-
+  
   grid <- tryCatch(
     query_db(con, "SELECT * FROM gwflow_grid ORDER BY cell_id"),
     error = function(e) data.frame()
   )
-
+  
   # Build lookup: cell_id -> row (or NULL)
   grid_map <- list()
   if (nrow(grid) > 0) {
@@ -1570,7 +1493,7 @@ gwflow_grid_index <- function(con) {
       grid_map[[as.character(grid$cell_id[i])]] <- grid[i, ]
     }
   }
-
+  
   list(base = base, total_cells = total_cells, grid_map = grid_map)
 }
 
@@ -1578,16 +1501,16 @@ gwflow_grid_index <- function(con) {
 #' @keywords internal
 write_gwflow_input <- function(con, output_dir, version, swat_version) {
   if (!has_data(con, "gwflow_base")) return(invisible(NULL))
-
+  
   gw <- gwflow_grid_index(con)
   base <- gw$base
   fp <- file.path(output_dir, "gwflow.input")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(paste0(" INPUT FOR GWFLOW MODULE ",
                     swat_meta_line(fp, version, swat_version)), f)
-
+  
   writeLines(" Basic information", f)
   writeLines(" structured", f)
   writeLines(paste0(" ", formatC(base$cell_size, format = "f", digits = 1, width = 12),
@@ -1622,7 +1545,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
                     " write flags (daily, annual, avg. annual)"), f)
   writeLines(paste0(" ", formatC(1, format = "f", digits = 0, width = 12),
                     " number of columns in output files"), f)
-
+  
   # Aquifer zones
   zones <- tryCatch(
     query_db(con, "SELECT * FROM gwflow_zone ORDER BY zone_id"),
@@ -1635,36 +1558,36 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
       zone_id_index[[as.character(zones$zone_id[i])]] <- i
     }
   }
-
+  
   writeLines(" Aquifer and Streambed Parameter Zones", f)
-
+  
   writeLines(" Aquifer Hydraulic Conductivity (m/day) Zones", f)
   writeLines(paste0(" ", zone_cnt), f)
   for (i in seq_len(zone_cnt)) {
     writeLines(paste0(i, "\t", format(zones$aquifer_k[i], nsmall = 4)), f)
   }
-
+  
   writeLines(" Aquifer Specific Yield Zones", f)
   writeLines(paste0(" ", zone_cnt), f)
   for (i in seq_len(zone_cnt)) {
     writeLines(paste0(i, "\t", format(zones$specific_yield[i], nsmall = 4)), f)
   }
-
+  
   writeLines(" Streambed Hydraulic Conductivity (m/day) Zones", f)
   writeLines(paste0(" ", zone_cnt), f)
   for (i in seq_len(zone_cnt)) {
     writeLines(paste0(i, "\t", format(zones$streambed_k[i], nsmall = 4)), f)
   }
-
+  
   writeLines(" Streambed Thickness (m) Zones", f)
   writeLines(paste0(" ", zone_cnt), f)
   for (i in seq_len(zone_cnt)) {
     writeLines(paste0(i, "\t", format(zones$streambed_thickness[i], nsmall = 4)), f)
   }
-
+  
   # Grid cell information
   writeLines(" Grid Cell Information", f)
-
+  
   status_lines <- "Cell Status (0=inactive; 1=active; 2=boundary)\n"
   elevation_lines <- "Ground Surface Elevation (m)\n"
   thickness_lines <- "Aquifer Thickness(m)\n"
@@ -1673,7 +1596,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
   recharge_lines <- "Recharge delay(Days)\n"
   et_lines <- "Groundwater ET Extinction Depth (m)\t\n"
   init_head_lines <- "Initial Groundwater Head (m)\n"
-
+  
   col_count <- base$col_count
   col <- 1
   for (cell_id in seq_len(gw$total_cells)) {
@@ -1688,7 +1611,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
       init_head_lines <- paste0(init_head_lines, "\n")
       col <- 1
     }
-
+    
     cell <- gw$grid_map[[as.character(cell_id)]]
     if (is.null(cell)) {
       status_lines <- paste0(status_lines, "0\t")
@@ -1697,7 +1620,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
       zone_k_lines <- paste0(zone_k_lines, "0\t")
       zone_yld_lines <- paste0(zone_yld_lines, "0\t")
       recharge_lines <- paste0(recharge_lines,
-        formatC(base$recharge_delay, format = "f", digits = 2), "\t")
+                               formatC(base$recharge_delay, format = "f", digits = 2), "\t")
       et_lines <- paste0(et_lines, "0.00\t")
       init_head_lines <- paste0(init_head_lines, "0.00\t")
     } else {
@@ -1705,17 +1628,17 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
       if (is.null(zone_idx)) zone_idx <- 0L
       status_lines <- paste0(status_lines, cell$status, "\t")
       elevation_lines <- paste0(elevation_lines,
-        formatC(cell$elevation, format = "f", digits = 2), "\t")
+                                formatC(cell$elevation, format = "f", digits = 2), "\t")
       thickness_lines <- paste0(thickness_lines,
-        formatC(cell$aquifer_thickness, format = "f", digits = 2), "\t")
+                                formatC(cell$aquifer_thickness, format = "f", digits = 2), "\t")
       zone_k_lines <- paste0(zone_k_lines, zone_idx, "\t")
       zone_yld_lines <- paste0(zone_yld_lines, zone_idx, "\t")
       recharge_lines <- paste0(recharge_lines,
-        formatC(base$recharge_delay, format = "f", digits = 2), "\t")
+                               formatC(base$recharge_delay, format = "f", digits = 2), "\t")
       et_lines <- paste0(et_lines,
-        formatC(cell$extinction_depth, format = "f", digits = 2), "\t")
+                         formatC(cell$extinction_depth, format = "f", digits = 2), "\t")
       init_head_lines <- paste0(init_head_lines,
-        formatC(cell$initial_head, format = "f", digits = 2), "\t")
+                                formatC(cell$initial_head, format = "f", digits = 2), "\t")
     }
     col <- col + 1
   }
@@ -1729,7 +1652,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
     et_lines <- paste0(et_lines, "\n")
     init_head_lines <- paste0(init_head_lines, "\n")
   }
-
+  
   cat(status_lines, file = f)
   cat(elevation_lines, file = f)
   cat(thickness_lines, file = f)
@@ -1738,7 +1661,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
   cat(recharge_lines, file = f)
   cat(et_lines, file = f)
   cat(init_head_lines, file = f)
-
+  
   # Output days
   writeLines(" Times for Groundwater Head Output", f)
   out_days <- tryCatch(
@@ -1752,7 +1675,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
                         swat_int_pad(out_days$jday[i])), f)
     }
   }
-
+  
   # Observation locations
   writeLines(" Groundwater Observation Locations", f)
   obs_locs <- tryCatch(
@@ -1765,7 +1688,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
       writeLines(as.character(obs_locs$cell_id[i]), f)
     }
   }
-
+  
   # Daily output cell
   writeLines(" Cell for detailed daily sources/sink output", f)
   row_det <- base$daily_output_row
@@ -1775,7 +1698,7 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
     cell_det <- (row_det - 1L) * col_count + col_det
   }
   writeLines(paste0(" ", cell_det), f)
-
+  
   # River cell information
   writeLines(" River Cell Information", f)
   writeLines(paste0(" ", formatC(base$river_depth, format = "f", digits = 2)), f)
@@ -1785,15 +1708,15 @@ write_gwflow_input <- function(con, output_dir, version, swat_version) {
 #' @keywords internal
 write_gwflow_chancells <- function(con, output_dir, version, swat_version) {
   if (!has_data(con, "gwflow_rivcell")) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, "gwflow.chancells")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(paste0(" Cell-Channel Connection Information ",
                     swat_meta_line(fp, version, swat_version)), f)
   writeLines("", f)
-
+  
   # Header
   writeLines(paste0(
     swat_int_pad("ID"),
@@ -1803,13 +1726,13 @@ write_gwflow_chancells <- function(con, output_dir, version, swat_version) {
     swat_int_pad("zone")
   ), f)
   writeLines("", f)
-
+  
   # Build channel GIS-to-con index
   chan_idx <- gwflow_gis_to_con_index(con, "chandeg_con")
-
+  
   cells <- tryCatch(
     query_db(con,
-      "SELECT r.cell_id, g.elevation, r.channel, r.length_m, g.zone
+             "SELECT r.cell_id, g.elevation, r.channel, r.length_m, g.zone
        FROM gwflow_rivcell r
        JOIN gwflow_grid g ON r.cell_id = g.cell_id
        ORDER BY r.cell_id"),
@@ -1833,16 +1756,16 @@ write_gwflow_chancells <- function(con, output_dir, version, swat_version) {
 #' @keywords internal
 write_gwflow_hrucell <- function(con, output_dir, version, swat_version) {
   if (!has_data(con, "gwflow_hrucell")) return(invisible(NULL))
-
+  
   base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
   recharge_type <- base$recharge
   if (!(recharge_type %in% c(1, 3))) return(invisible(NULL))
-
+  
   hru_idx <- gwflow_gis_to_con_index(con, "hru_con")
-
+  
   cells <- tryCatch(
     query_db(con,
-      "SELECT h.cell_id, h.hru, h.area_m2,
+             "SELECT h.cell_id, h.hru, h.area_m2,
               g.elevation, COALESCE(gis.arslp, 0) as arslp
        FROM gwflow_hrucell h
        JOIN gwflow_grid g ON h.cell_id = g.cell_id
@@ -1851,17 +1774,17 @@ write_gwflow_hrucell <- function(con, output_dir, version, swat_version) {
     error = function(e) data.frame()
   )
   if (nrow(cells) == 0) return(invisible(NULL))
-
+  
   # gwflow.hrucell
   fp1 <- file.path(output_dir, "gwflow.hrucell")
   f1 <- file(fp1, "w")
   on.exit(close(f1), add = TRUE)
-
+  
   writeLines(paste0(" HRU-Cell Connection Information ",
                     swat_meta_line(fp1, version, swat_version)), f1)
   writeLines("", f1)
   writeLines(" HRUs that are connected to cells", f1)
-
+  
   hru_ids <- sort(unique(cells$hru))
   writeLines(as.character(length(hru_ids)), f1)
   for (hid in hru_ids) {
@@ -1870,7 +1793,7 @@ write_gwflow_hrucell <- function(con, output_dir, version, swat_version) {
     writeLines(as.character(hcon), f1)
   }
   writeLines("", f1)
-
+  
   writeLines(paste0(
     swat_int_pad("hru"),
     swat_num_pad("area_m2"),
@@ -1878,7 +1801,7 @@ write_gwflow_hrucell <- function(con, output_dir, version, swat_version) {
     swat_num_pad("overlap_m2")
   ), f1)
   writeLines("", f1)
-
+  
   for (i in seq_len(nrow(cells))) {
     row <- cells[i, ]
     hcon <- hru_idx[[as.character(row$hru)]]
@@ -1890,19 +1813,19 @@ write_gwflow_hrucell <- function(con, output_dir, version, swat_version) {
       swat_num_pad(row$area_m2, decimals = 2)
     ), f1)
   }
-
+  
   # gwflow.cellhru
   fp2 <- file.path(output_dir, "gwflow.cellhru")
   f2 <- file(fp2, "w")
   on.exit(close(f2), add = TRUE)
-
+  
   writeLines(paste0(" Cell-HRU Connection Information ",
                     swat_meta_line(fp2, version, swat_version)), f2)
   writeLines("", f2)
-
+  
   num_intersect <- length(unique(cells$cell_id))
   writeLines(paste0(num_intersect, "\t\t\tNumber of cells that intersect HRUs"), f2)
-
+  
   writeLines(paste0(
     swat_int_pad("cell_id"),
     swat_int_pad("hru"),
@@ -1910,7 +1833,7 @@ write_gwflow_hrucell <- function(con, output_dir, version, swat_version) {
     swat_num_pad("overlap_m2")
   ), f2)
   writeLines("", f2)
-
+  
   cell_area <- base$cell_size * base$cell_size
   cells_by_cell <- cells[order(cells$cell_id), ]
   for (i in seq_len(nrow(cells_by_cell))) {
@@ -1930,15 +1853,15 @@ write_gwflow_hrucell <- function(con, output_dir, version, swat_version) {
 #' @keywords internal
 write_gwflow_lsucell <- function(con, output_dir, version, swat_version) {
   if (!has_data(con, "gwflow_lsucell")) return(invisible(NULL))
-
+  
   base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
   if (!(base$recharge %in% c(2, 3))) return(invisible(NULL))
-
+  
   lsu_idx <- gwflow_gis_to_con_index(con, "rout_unit_con")
-
+  
   cells <- tryCatch(
     query_db(con,
-      "SELECT l.cell_id, l.lsu, l.area_m2,
+             "SELECT l.cell_id, l.lsu, l.area_m2,
               COALESCE(gis.area, 0) as lsu_area
        FROM gwflow_lsucell l
        LEFT JOIN gis_lsus gis ON l.lsu = gis.id
@@ -1946,14 +1869,14 @@ write_gwflow_lsucell <- function(con, output_dir, version, swat_version) {
     error = function(e) data.frame()
   )
   if (nrow(cells) == 0) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, "gwflow.lsucell")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(paste0(" LSU (landscape unit) - Cell Connection Information ",
                     swat_meta_line(fp, version, swat_version)), f)
-
+  
   total_lsu <- safe_count(con, "gis_lsus")
   unique_lsu <- sort(unique(cells$lsu))
   writeLines(paste0(total_lsu, "\t\t total number of landscape units in model"), f)
@@ -1965,7 +1888,7 @@ write_gwflow_lsucell <- function(con, output_dir, version, swat_version) {
     writeLines(as.character(lcon), f)
   }
   writeLines("", f)
-
+  
   writeLines("connection information between landscape units and grid cells", f)
   writeLines(paste0(
     swat_int_pad("lsu_id"),
@@ -1974,7 +1897,7 @@ write_gwflow_lsucell <- function(con, output_dir, version, swat_version) {
     swat_num_pad("area_m2")
   ), f)
   writeLines("", f)
-
+  
   for (i in seq_len(nrow(cells))) {
     row <- cells[i, ]
     lcon <- lsu_idx[[as.character(row$lsu)]]
@@ -1992,26 +1915,26 @@ write_gwflow_lsucell <- function(con, output_dir, version, swat_version) {
 #' @keywords internal
 write_gwflow_rescells <- function(con, output_dir, version, swat_version) {
   if (!has_data(con, "gwflow_rescell")) return(invisible(NULL))
-
+  
   base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
   if (!isTRUE(base$reservoir_exchange == 1)) return(invisible(NULL))
-
+  
   res_idx <- gwflow_gis_to_con_index(con, "reservoir_con")
-
+  
   cells <- tryCatch(
     query_db(con,
-      "SELECT r.cell_id, r.res_id, r.res_stage
+             "SELECT r.cell_id, r.res_id, r.res_stage
        FROM gwflow_rescell r
        JOIN gwflow_grid g ON r.cell_id = g.cell_id
        ORDER BY r.cell_id"),
     error = function(e) data.frame()
   )
   if (nrow(cells) == 0) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, "gwflow.rescells")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(paste0(" Cell-Reservoir Connection Information ",
                     swat_meta_line(fp, version, swat_version)), f)
   writeLines(" Reservoir bed parameters", f)
@@ -2019,14 +1942,14 @@ write_gwflow_rescells <- function(con, output_dir, version, swat_version) {
   writeLines(paste0(" ", base$resbed_k, "\t\t bed conductivity (m/day)"), f)
   writeLines(paste0(" ", nrow(cells),
                     "\t\t number of cells connected to reservoirs"), f)
-
+  
   writeLines(paste0(
     swat_int_pad("cell_id"),
     swat_int_pad("res_id"),
     swat_num_pad("res_stage_m")
   ), f)
   writeLines("", f)
-
+  
   for (i in seq_len(nrow(cells))) {
     row <- cells[i, ]
     rcon <- res_idx[[as.character(row$res_id)]]
@@ -2043,31 +1966,31 @@ write_gwflow_rescells <- function(con, output_dir, version, swat_version) {
 #' @keywords internal
 write_gwflow_floodplain <- function(con, output_dir, version, swat_version) {
   if (!has_data(con, "gwflow_fpcell")) return(invisible(NULL))
-
+  
   base <- query_db(con, "SELECT * FROM gwflow_base LIMIT 1")
   if (!isTRUE(base$floodplain_exchange == 1)) return(invisible(NULL))
-
+  
   chan_idx <- gwflow_gis_to_con_index(con, "chandeg_con")
-
+  
   cells <- tryCatch(
     query_db(con,
-      "SELECT f.cell_id, f.channel_id, f.area_m2
+             "SELECT f.cell_id, f.channel_id, f.area_m2
        FROM gwflow_fpcell f
        JOIN gwflow_grid g ON f.cell_id = g.cell_id
        ORDER BY f.cell_id"),
     error = function(e) data.frame()
   )
   if (nrow(cells) == 0) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, "gwflow.floodplain")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(paste0(
     "gwflow floodplain cells (optional file; list cells that interact with channels, ",
     "when channel water is in the floodplain) ",
     swat_meta_line(fp, version, swat_version)), f)
-
+  
   # Filter to valid channel connections
   valid_lines <- character(0)
   for (i in seq_len(nrow(cells))) {
@@ -2081,7 +2004,7 @@ write_gwflow_floodplain <- function(con, output_dir, version, swat_version) {
       swat_num_pad(row$area_m2, decimals = 2)
     ))
   }
-
+  
   writeLines(paste0(length(valid_lines),
                     "\t\t\t\t\tNumber of floodplain cells"), f)
   writeLines(paste0(
@@ -2103,20 +2026,20 @@ write_gwflow_wetland <- function(con, output_dir, version, swat_version) {
   )
   if (nrow(base) == 0 || !isTRUE(base$wetland_exchange == 1))
     return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, "gwflow.wetland")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(paste0("gwflow.wetland: parameters for groundwater-wetland interactions ",
                     swat_meta_line(fp, version, swat_version)), f)
   writeLines("wet_id = same as id listed in wetland.wet", f)
   writeLines("thick_m = thickness (in meters) of wetland bottom material", f)
   writeLines("(hydraulic conductivity is listed in hydrology.wet)", f)
-
+  
   writeLines(paste0(swat_int_pad("wet_id"), swat_num_pad("thick_m")), f)
   writeLines("", f)
-
+  
   wet_thick <- list()
   if (has_data(con, "gwflow_wetland")) {
     wt <- query_db(con, "SELECT wet_id, thickness FROM gwflow_wetland ORDER BY wet_id")
@@ -2124,7 +2047,7 @@ write_gwflow_wetland <- function(con, output_dir, version, swat_version) {
       wet_thick[[as.character(wt$wet_id[i])]] <- wt$thickness[i]
     }
   }
-
+  
   if (has_data(con, "wetland_wet")) {
     wets <- query_db(con, "SELECT id FROM wetland_wet ORDER BY id")
     default_thick <- base$wet_thickness
@@ -2149,12 +2072,12 @@ write_gwflow_tiles <- function(con, output_dir, version, swat_version) {
   )
   if (nrow(base) == 0 || !isTRUE(base$tile_drainage == 1))
     return(invisible(NULL))
-
+  
   gw <- gwflow_grid_index(con)
   fp <- file.path(output_dir, "gwflow.tiles")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(paste0("gwflow tile drain information ",
                     swat_meta_line(fp, version, swat_version)), f)
   writeLines(paste0(" ", swat_num_pad(base$tile_depth, decimals = 5),
@@ -2166,7 +2089,7 @@ write_gwflow_tiles <- function(con, output_dir, version, swat_version) {
   tile_groups <- if (!is.null(base$tile_groups)) base$tile_groups else 0L
   writeLines(paste0(" ", swat_int_pad(tile_groups, pad = SWAT_NUM_PAD),
                     "\t\t Tile cell groups (flag: 0=no; 1=yes)"), f)
-
+  
   status_lines <- "gwflow tile cells (0=no tile; 1=tiles are present)\n"
   col_count <- base$col_count
   col <- 1
@@ -2195,13 +2118,13 @@ write_gwflow_solutes <- function(con, output_dir, version, swat_version) {
   )
   if (nrow(base) == 0 || !isTRUE(base$solute_transport == 1))
     return(invisible(NULL))
-
+  
   if (!has_data(con, "gwflow_solutes")) return(invisible(NULL))
-
+  
   fp <- file.path(output_dir, "gwflow.solutes")
   f <- file(fp, "w")
   on.exit(close(f))
-
+  
   writeLines(paste0("solute parameters and initial concentrations ",
                     swat_meta_line(fp, version, swat_version)), f)
   writeLines("general parameters", f)
@@ -2209,9 +2132,9 @@ write_gwflow_solutes <- function(con, output_dir, version, swat_version) {
                     "\t\t number of transport time steps for flow time step"), f)
   writeLines(paste0(" ", base$disp_coef,
                     "\t\t dispersion coefficient (m2/day)"), f)
-
+  
   writeLines("solute parameters: name,sorption,rate constant,canal_irrig (one row per active solute)", f)
-
+  
   solutes <- query_db(con, "SELECT * FROM gwflow_solutes")
   for (i in seq_len(nrow(solutes))) {
     sol <- solutes[i, ]
@@ -2222,7 +2145,7 @@ write_gwflow_solutes <- function(con, output_dir, version, swat_version) {
       swat_num_pad(sol$canal_irr, decimals = 2)
     ), f)
   }
-
+  
   writeLines("initial concentrations (g/m3)", f)
   for (i in seq_len(nrow(solutes))) {
     sol <- solutes[i, ]
@@ -2233,7 +2156,7 @@ write_gwflow_solutes <- function(con, output_dir, version, swat_version) {
     } else {
       gw <- gwflow_grid_index(con)
       solute_col <- paste0("init_",
-        if (sol$solute_name == "no3-n") "no3" else sol$solute_name)
+                           if (sol$solute_name == "no3-n") "no3" else sol$solute_name)
       grid_text <- gwflow_write_grid_column(con, gw, solute_col)
       cat(grid_text, file = f)
     }
@@ -2264,14 +2187,14 @@ gwflow_write_grid_column <- function(con, gw, column_name) {
                          " FROM gwflow_init_conc ORDER BY cell_id")),
     error = function(e) data.frame()
   )
-
+  
   conc_map <- list()
   if (nrow(conc_data) > 0) {
     for (i in seq_len(nrow(conc_data))) {
       conc_map[[as.character(conc_data$cell_id[i])]] <- conc_data[[column_name]][i]
     }
   }
-
+  
   result <- ""
   base <- gw$base
   col <- 1
