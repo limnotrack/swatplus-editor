@@ -79,6 +79,9 @@ init_gwflow <- function(project, cell_size, row_count, col_count,
   validate_project(project)
   con <- open_project_db(project$db_file)
   on.exit(close_db(con))
+  
+  gw_flow_ini_file <- system.file("extdata", "gwflow.ini", 
+                                  package = "rQSWATPlus")
 
   # Create gwflow tables if needed
   execute_db(con, "
