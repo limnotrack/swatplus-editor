@@ -60,7 +60,7 @@ add_weather_stations <- function(project, stations) {
   }
 
   # Ensure optional columns exist with NULL defaults
-  optional_cols <- c("elev", "pcp", "tmp", "slr", "hmd", "wnd", "pet",
+  optional_cols <- c("pcp", "tmp", "slr", "hmd", "wnd", "pet",
                      "atmo_dep", "wgn_id")
   for (col in optional_cols) {
     if (!col %in% names(stations)) {
@@ -80,22 +80,18 @@ add_weather_stations <- function(project, stations) {
   n_inserted <- 0
   for (i in seq_len(nrow(stations))) {
     row <- stations[i, ]
+    weather_sta_cli <- DBI::dbReadTable(con, "weather_sta_cli")
     tryCatch({
       execute_db(con,
         "INSERT INTO weather_sta_cli
-         (name, lat, lon, elev, pcp, tmp, slr, hmd, wnd, pet, atmo_dep, wgn_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+         (name, wgn_id, pcp, tmp, slr, hmd, wnd, pet, atmo_dep, lat, lon)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         params = list(
-          as.character(row$name), as.numeric(row$lat), as.numeric(row$lon),
-          as.numeric(row$elev),
-          as.character(row$pcp),
-          as.character(row$tmp),
-          as.character(row$slr),
-          as.character(row$hmd),
-          as.character(row$wnd),
-          as.character(row$pet),
-          as.character(row$atmo_dep),
-          as.integer(row$wgn_id)
+          as.character(row$name), as.integer(row$wgn_id), as.character(row$pcp),
+          as.character(row$tmp), as.character(row$slr), as.character(row$hmd),
+          as.character(row$wnd), as.character(row$pet),
+          as.character(row$atmo_dep), as.numeric(row$lat),
+          as.numeric(row$lon)
         ))
       n_inserted <- n_inserted + 1
     }, error = function(e) {
