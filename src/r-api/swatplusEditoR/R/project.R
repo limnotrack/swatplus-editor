@@ -355,6 +355,121 @@ get_project_info <- function(project) {
   )
 }
 
+#' Populate reference/parameter tables from the SWAT+ datasets database
+#'
+#' Uses SQLite ATTACH to copy reference data (plants, fertilizers, operations,
+#' structural BMPs, land use, calibration parameters, etc.) from the
+#' \pkg{rQSWATPlus} reference database (\file{QSWATPlusProj.sqlite}) into the
+#' project database.  Only empty or missing tables are populated; tables with
+#' existing data are left untouched.  This mirrors the Python SWAT+ Editor
+#' \code{SetupProjectDatabase.initialize_data()}.
+#'
+#' @param con DBI connection to the project database.
+#' @return Invisible \code{NULL}.
+#' @keywords internal
+populate_from_datasets <- function(con) {
+  datasets_db <- ""
+  if (requireNamespace("rQSWATPlus", quietly = TRUE)) {
+    datasets_db <- system.file("extdata", "QSWATPlusProj.sqlite",
+                               package = "rQSWATPlus")
+  }
+  if (!nzchar(datasets_db) || !file.exists(datasets_db)) {
+    return(invisible(NULL))
+  }
+
+  DBI::dbExecute(con, paste0("ATTACH DATABASE '", datasets_db, "' AS datasets"))
+  on.exit(DBI::dbExecute(con, "DETACH DATABASE datasets"), add = TRUE)
+
+  safe_count <- function(tbl_name) {
+    tryCatch(
+      DBI::dbGetQuery(con,
+        paste0("SELECT COUNT(*) AS n FROM main.", tbl_name))$n,
+      error = function(e) -1L
+    )
+  }
+
+  # Reference tables to copy from datasets (ordered for FK dependencies).
+  ref_tables <- c(
+    # Parameter database
+    "plants_plt", "fertilizer_frt", "tillage_til", "pesticide_pst",
+    "pathogens_pth", "urban_urb", "septic_sep", "snow_sno",
+    # LUM lookup tables
+    "cntable_lum", "ovn_table_lum", "cons_prac_lum",
+    # Operations (graze_ops depends on fertilizer_frt)
+    "harv_ops", "fire_ops", "irr_ops", "sweep_ops", "chem_app_ops",
+    "graze_ops",
+    # Structural BMPs
+    "bmpuser_str", "filterstrip_str", "grassedww_str",
+    "septic_str", "tiledrain_str",
+    # Calibration
+    "cal_parms_cal",
+    # Soils LTE
+    "soils_lte_sol",
+    # Land use (depends on cntable, cons_prac, ovn_table, etc.)
+    "landuse_lum"
+  )
+
+  for (tbl in ref_tables) {
+    n <- safe_count(tbl)
+    if (n <= 0L) {
+      # Drop empty/wrong-schema table and recreate from datasets
+      tryCatch(
+        DBI::dbExecute(con, paste0("DROP TABLE IF EXISTS main.", tbl)),
+        error = function(e) NULL
+      )
+      DBI::dbExecute(con, paste0(
+        "CREATE TABLE main.", tbl,
+        " AS SELECT * FROM datasets.", tbl
+      ))
+    }
+  }
+
+  # Decision tables: copy lum.dtl + selected res_rel.dtl (non-LTE)
+  if (safe_count("d_table_dtl") <= 0L) {
+    tryCatch(
+      DBI::dbExecute(con, "DROP TABLE IF EXISTS main.d_table_dtl"),
+      error = function(e) NULL
+    )
+    DBI::dbExecute(con, "
+      CREATE TABLE main.d_table_dtl AS
+      SELECT * FROM datasets.d_table_dtl
+      WHERE file_name IN ('lum.dtl', 'res_rel.dtl')
+        AND (file_name != 'res_rel.dtl'
+             OR name IN ('corps_med_res1','corps_med_res',
+                         'wetland','drawdown_days','flood_season'))")
+
+    for (sub_tbl in c("d_table_dtl_cond", "d_table_dtl_cond_alt",
+                      "d_table_dtl_act", "d_table_dtl_act_out")) {
+      tryCatch(
+        DBI::dbExecute(con, paste0("DROP TABLE IF EXISTS main.", sub_tbl)),
+        error = function(e) NULL
+      )
+    }
+
+    DBI::dbExecute(con, "
+      CREATE TABLE main.d_table_dtl_cond AS
+      SELECT c.* FROM datasets.d_table_dtl_cond c
+      INNER JOIN main.d_table_dtl d ON c.d_table_id = d.id")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE main.d_table_dtl_cond_alt AS
+      SELECT ca.* FROM datasets.d_table_dtl_cond_alt ca
+      INNER JOIN main.d_table_dtl_cond c ON ca.cond_id = c.id")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE main.d_table_dtl_act AS
+      SELECT a.* FROM datasets.d_table_dtl_act a
+      INNER JOIN main.d_table_dtl d ON a.d_table_id = d.id")
+
+    DBI::dbExecute(con, "
+      CREATE TABLE main.d_table_dtl_act_out AS
+      SELECT ao.* FROM datasets.d_table_dtl_act_out ao
+      INNER JOIN main.d_table_dtl_act a ON ao.act_id = a.id")
+  }
+
+  invisible(NULL)
+}
+
 #' Ensure all required SWAT+ tables exist before writing files
 #'
 #' Creates any missing tables that \code{\link{write_config_files}} needs and
@@ -366,6 +481,9 @@ get_project_info <- function(project) {
 #' @return Invisible \code{NULL}.
 #' @keywords internal
 ensure_write_tables <- function(con) {
+
+  # ---- Populate reference tables from the bundled datasets database ----
+  populate_from_datasets(con)
 
   # ---- helper: create a table only if it does not exist ----
   create_if_missing <- function(sql) {

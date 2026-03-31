@@ -933,3 +933,104 @@ test_that("ERA5 climate data integrates with weather stations and file writing",
                 info = paste("ERA5 data file not copied:", f))
   }
 })
+
+# ---- populate_from_datasets tests ----
+
+test_that("populate_from_datasets fills reference tables from rQSWATPlus", {
+  skip_if_not_installed("rQSWATPlus")
+
+  db_path <- tempfile(fileext = ".sqlite")
+  on.exit(unlink(db_path))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), db_path)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Create empty tables with minimal schema (as ensure_write_tables does)
+  DBI::dbExecute(con, "CREATE TABLE plants_plt (id INTEGER PRIMARY KEY, name TEXT)")
+  DBI::dbExecute(con, "CREATE TABLE fertilizer_frt (id INTEGER PRIMARY KEY, name TEXT)")
+  DBI::dbExecute(con, "CREATE TABLE cal_parms_cal (id INTEGER PRIMARY KEY, name TEXT)")
+  DBI::dbExecute(con, "CREATE TABLE snow_sno (id INTEGER PRIMARY KEY, name TEXT)")
+  DBI::dbExecute(con, "CREATE TABLE landuse_lum (id INTEGER PRIMARY KEY, name TEXT)")
+  DBI::dbExecute(con, "CREATE TABLE d_table_dtl (id INTEGER PRIMARY KEY, name TEXT)")
+
+  # Verify they are empty
+
+  expect_equal(DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM plants_plt")$n, 0L)
+
+  # Run populate_from_datasets
+  swatplusEditoR:::populate_from_datasets(con)
+
+  # Verify reference tables are now populated with full schemas
+  plants <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM plants_plt")$n
+  expect_true(plants > 200,
+              info = paste("Expected 266+ plants_plt rows, got", plants))
+
+  fert <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM fertilizer_frt")$n
+  expect_true(fert > 50,
+              info = paste("Expected 59+ fertilizer_frt rows, got", fert))
+
+  cal <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM cal_parms_cal")$n
+  expect_true(cal > 200,
+              info = paste("Expected 221+ cal_parms_cal rows, got", cal))
+
+  snow <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM snow_sno")$n
+  expect_true(snow >= 1,
+              info = paste("Expected 1+ snow_sno rows, got", snow))
+
+  lum <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM landuse_lum")$n
+  expect_true(lum > 200,
+              info = paste("Expected 284+ landuse_lum rows, got", lum))
+
+  # Decision tables should be filtered (lum.dtl + select res_rel.dtl)
+  dtl <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM d_table_dtl")$n
+  expect_true(dtl > 10,
+              info = paste("Expected 43+ d_table_dtl rows, got", dtl))
+
+  # Verify full schema was restored (not just id+name)
+  plant_cols <- DBI::dbGetQuery(con, "PRAGMA table_info(plants_plt)")
+  expect_true(nrow(plant_cols) > 40,
+              info = paste("Expected 50+ columns in plants_plt, got",
+                           nrow(plant_cols)))
+})
+
+test_that("populate_from_datasets does not overwrite existing data", {
+  skip_if_not_installed("rQSWATPlus")
+
+  db_path <- tempfile(fileext = ".sqlite")
+  on.exit(unlink(db_path))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), db_path)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Create plants_plt with one row of data (simulating user-modified table)
+  DBI::dbExecute(con, "CREATE TABLE plants_plt (id INTEGER PRIMARY KEY, name TEXT)")
+  DBI::dbExecute(con, "INSERT INTO plants_plt (name) VALUES ('my_custom_plant')")
+
+  # Run populate_from_datasets
+  swatplusEditoR:::populate_from_datasets(con)
+
+  # The existing table with data should NOT be touched
+  plants <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM plants_plt")$n
+  expect_equal(plants, 1L)
+  custom <- DBI::dbGetQuery(con, "SELECT name FROM plants_plt")$name
+  expect_equal(custom, "my_custom_plant")
+})
+
+test_that("populate_from_datasets is idempotent", {
+  skip_if_not_installed("rQSWATPlus")
+
+  db_path <- tempfile(fileext = ".sqlite")
+  on.exit(unlink(db_path))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), db_path)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Run twice
+  swatplusEditoR:::populate_from_datasets(con)
+  n1 <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM plants_plt")$n
+
+  swatplusEditoR:::populate_from_datasets(con)
+  n2 <- DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM plants_plt")$n
+
+  expect_equal(n1, n2)
+})
