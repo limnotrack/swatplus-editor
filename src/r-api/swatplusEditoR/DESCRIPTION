@@ -21,6 +21,9 @@ Suggests:
     httr,
     jsonlite,
     knitr,
-    rmarkdown
+    rmarkdown,
+    rQSWATPlus
+Remotes:
+    limnotrack/QSWATPlus/rQSWATPlus@copilot/develop-r-package-for-qgis-plugin
 VignetteBuilder: knitr
 Config/testthat/edition: 3

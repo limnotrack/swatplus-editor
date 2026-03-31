@@ -1,18 +1,30 @@
 # Test GWFLOW configuration functions
 
 create_gwflow_test_project <- function() {
-  db_path <- tempfile(fileext = ".sqlite")
-  project_dir <- tempdir()
+  skip_if_not_installed("rQSWATPlus")
 
-  project <- list(
-    project_dir = project_dir,
-    db_file = db_path
+  dem         <- system.file("extdata", "ravn_dem.tif",    package = "rQSWATPlus")
+  landuse     <- system.file("extdata", "ravn_landuse.tif", package = "rQSWATPlus")
+  soil        <- system.file("extdata", "ravn_soil.tif",   package = "rQSWATPlus")
+  lu_lookup   <- system.file("extdata", "ravn_landuse.csv", package = "rQSWATPlus")
+  soil_lookup <- system.file("extdata", "ravn_soil.csv",   package = "rQSWATPlus")
+  outlet      <- system.file("extdata", "ravn_outlet.shp", package = "rQSWATPlus")
+
+  rQSWATPlus::qswat_run(
+    project_dir     = file.path(tempdir(), "ravn_gwflow"),
+    dem_file        = dem,
+    landuse_file    = landuse,
+    soil_file       = soil,
+    landuse_lookup  = lu_lookup,
+    soil_lookup     = soil_lookup,
+    outlet_file     = outlet,
+    threshold       = 500,
+    slope_breaks    = c(0, 5, 15, 9999),
+    landuse_threshold = 5,
+    soil_threshold  = 5,
+    db_file         = "swat.db",
+    quiet           = TRUE
   )
-
-  project <- create_project_db(project, db_path, overwrite = TRUE)
-  set_simulation_time(project, day_start = 1, yrc_start = 2000,
-                      day_end = 365, yrc_end = 2010)
-  project
 }
 
 test_that("get_gwflow_status returns status", {
