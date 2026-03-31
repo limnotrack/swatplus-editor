@@ -1,5 +1,5 @@
 # Test file writing functions
-
+library(testthat)
 create_write_test_project <- function() {
   db_path <- tempfile(fileext = ".sqlite")
   project_dir <- tempdir()
