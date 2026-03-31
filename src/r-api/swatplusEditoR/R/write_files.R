@@ -83,10 +83,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
   
   con <- open_project_db(project$db_file)
   on.exit(close_db(con))
-  
-  # Ensure all required tables exist with sensible defaults
-  ensure_write_tables(con)
-  
+
   tables <- list_db_tables(con)
   
   # Read project config
@@ -1086,7 +1083,7 @@ write_decision_tables <- function(con, output_dir, version, swat_version) {
     
     fp <- file.path(output_dir, fn)
     f <- file(fp, "w")
-    on.exit(close(f), add = TRUE)
+    # on.exit(close(f), add = TRUE)
     
     writeLines(swat_meta_line(fp, version, swat_version), f)
     
@@ -1142,6 +1139,7 @@ write_decision_tables <- function(con, output_dir, version, swat_version) {
         }
       }
     }
+    close(f)
   }
 }
 
