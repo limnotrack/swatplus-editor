@@ -125,7 +125,9 @@ run_swatplus <- function(swat_exe    = swatplus_exe(),
     stdout  = strsplit(result$stdout, "\n", fixed = TRUE)[[1L]],
     stderr  = strsplit(result$stderr, "\n", fixed = TRUE)[[1L]],
     elapsed = elapsed,
-    success = result$status == 0L
+    success = result$status == 0L,
+    simulation_out = readLines(file.path(working_dir, "simulation.out"), warn = FALSE),
+    diagnostics = readLines(file.path(working_dir, "diagnostics.out"), warn = FALSE)
   )
   invisible(out)
 }
