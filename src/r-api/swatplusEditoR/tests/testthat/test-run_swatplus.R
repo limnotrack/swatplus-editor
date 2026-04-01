@@ -11,7 +11,23 @@ setup_swat_sim <- function() {
   lu_lookup   <- system.file("extdata", "ravn_landuse.csv", package = "rQSWATPlus")
   soil_lookup <- system.file("extdata", "ravn_soil.csv",    package = "rQSWATPlus")
   outlet      <- system.file("extdata", "ravn_outlet.shp",  package = "rQSWATPlus")
-
+  era5_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
+  wgn_db <- system.file("extdata", "swatplus_wgn_nz.sqlite", package = "swatplusEditoR")
+  # Register ERA5 as the weather station
+  stations <- data.frame(
+    name     = "IDera5",
+    lat      = -38.1,
+    lon      = 176.3,
+    pcp      = "pcp.cli",
+    tmp      = "tmp.cli",
+    slr      = "slr.cli",
+    hmd      = "hmd.cli",
+    wnd      = "wnd.cli",
+    stringsAsFactors = FALSE
+  )
+  
+  
+  
   project <- rQSWATPlus::qswat_run(
     project_dir      = file.path(tempdir(), "ravn_sim"),
     dem_file         = dem,
@@ -26,26 +42,11 @@ setup_swat_sim <- function() {
     soil_threshold   = 5,
     db_file          = "swat.db",
     quiet            = TRUE
-  )
-
-  set_simulation_time(project, day_start = 1, yrc_start = 2000,
-                      day_end = 365, yrc_end = 2000)
-
-  era5_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
-
-  # Register ERA5 as the weather station
-  stations <- data.frame(
-    name     = "IDera5",
-    lat      = -38.1,
-    lon      = 176.3,
-    pcp      = "pcp.cli",
-    tmp      = "tmp.cli",
-    slr      = "slr.cli",
-    hmd      = "hmd.cli",
-    wnd      = "wnd.cli",
-    stringsAsFactors = FALSE
-  )
-  add_weather_stations(project, stations)
+  ) |> 
+    set_simulation_time(day_start = 1, yrc_start = 2000,
+                      day_end = 365, yrc_end = 2000) |> 
+    add_weather_stations(stations) |> 
+    get_wgn_cfsr_world(wgn_db = wgn_db)
 
   list(project = project, era5_dir = era5_dir,
        output_dir = tempfile("txtinout_"))
@@ -94,8 +95,10 @@ test_that("run_swatplus executes SWAT+ simulation", {
                      weather_dir = era5_dir)
   list.files(output_dir)  # Debug: check files before running
 
-  result <- run_swatplus(swat_exe = exe, working_dir = output_dir,
+  issues <- check_swatplus(project = project, output_dir = output_dir)
+    result <- run_swatplus(swat_exe = exe, working_dir = output_dir,
                          verbose = TRUE)
+  readLines(result$stdout_file)  # Debug: print stdout for troubleshooting
 
   expect_true(result$success)
   expect_equal(result$status, 0L)
