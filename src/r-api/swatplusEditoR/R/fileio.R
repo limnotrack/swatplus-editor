@@ -87,7 +87,7 @@ swat_meta_line <- function(file_name, version = NULL, swat_version = NULL) {
   vtxt <- if (!is.null(version)) paste0(" v", version) else ""
   svtxt <- if (!is.null(swat_version)) paste0("for SWAT+ ", swat_version) else ""
   date_str <- format(Sys.time(), "%Y-%m-%d %H:%M")
-  paste0(basename(file_name), ": written by SWAT+ editor", vtxt,
+  paste0(basename(file_name), ": written by swatplusEditoR R package", vtxt,
          " on ", date_str, " ", svtxt)
 }
 
