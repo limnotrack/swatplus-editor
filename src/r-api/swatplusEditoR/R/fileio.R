@@ -84,7 +84,9 @@ swat_bool_pad <- function(val, pad = SWAT_CODE_PAD, align = "right") {
 #' @return Meta line string.
 #' @keywords internal
 swat_meta_line <- function(file_name, version = NULL, swat_version = NULL) {
-  vtxt <- if (!is.null(version)) paste0(" v", version) else ""
+  # vtxt <- if (!is.null(version)) paste0(" v", version) else ""
+  # Get package version
+  vtxt <- tryCatch(as.character(packageVersion("swatplusEditoR")), error = function(e) "unknown")
   svtxt <- if (!is.null(swat_version)) paste0("for SWAT+ ", swat_version) else ""
   date_str <- format(Sys.time(), "%Y-%m-%d %H:%M")
   paste0(basename(file_name), ": written by swatplusEditoR R package", vtxt,
