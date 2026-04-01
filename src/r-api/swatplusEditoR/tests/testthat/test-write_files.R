@@ -25,33 +25,10 @@ create_write_test_project <- function() {
     rQSWATPlus::qswat_delineate(threshold = 500, quiet = TRUE) |> 
     rQSWATPlus::qswat_create_streams() |> 
     rQSWATPlus::qswat_create_hrus() |> 
-    rQSWATPlus::qswat_write_database(overwrite = TRUE)
-  
-  con <- open_project_db(project$db_file)
-  DBI::dbListTables(con)
-  hru_data_hru <- DBI::dbReadTable(con, "hru_data_hru")
-
-  # project <- create_project_db(project, overwrite = TRUE)
-
-  # Add simulation time
-  set_simulation_time(project, day_start = 1, yrc_start = 2000,
-                      day_end = 365, yrc_end = 2010)
-
-  # Add weather stations
-  stations <- data.frame(
-    name = c("sta1", "sta2"),
-    lat = c(-38.1, -38.2),
-    lon = c(176.3, 176.4),
-    pcp = c("pcp1.cli", "pcp2.cli"),
-    tmp = c("tmp1.cli", "tmp2.cli"),
-    slr = c("slr1.cli", "slr2.cli"),
-    hmd = c("hmd1.cli", "hmd2.cli"),
-    wnd = c("wnd1.cli", "wnd2.cli"),
-    pet = c("pet1.cli", "pet2.cli"),
-    atmo_dep = c("atmo1.cli", "atmo2.cli"),
-    stringsAsFactors = FALSE
-  )
-  add_weather_stations(project, stations)
+    rQSWATPlus::qswat_write_database(overwrite = TRUE) |>
+    # Add simulation time
+    set_simulation_time(day_start = 1, yrc_start = 2000,
+                        day_end = 365, yrc_end = 2010)
 
   project
 }
