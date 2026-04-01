@@ -189,3 +189,168 @@ test_that("set_weather_dir rejects non-existent directory", {
   expect_error(set_weather_dir(project, "/nonexistent/path"),
                "does not exist")
 })
+
+# -------------------------------------------------------------------
+# Tests for get_wgn_cfsr_world
+# -------------------------------------------------------------------
+
+#' Create a minimal swatplus_wgn.sqlite with wgn_cfsr_world + _mon tables
+create_mock_wgn_db <- function() {
+  wgn_db_path <- tempfile(fileext = ".sqlite")
+  con <- DBI::dbConnect(RSQLite::SQLite(), wgn_db_path)
+  on.exit(DBI::dbDisconnect(con))
+
+  DBI::dbExecute(con, "CREATE TABLE wgn_cfsr_world (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    elev REAL NOT NULL,
+    rain_yrs INTEGER NOT NULL
+  )")
+
+  DBI::dbExecute(con, "CREATE TABLE wgn_cfsr_world_mon (
+    id INTEGER PRIMARY KEY,
+    wgn_id INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    tmp_max_ave REAL, tmp_min_ave REAL, tmp_max_sd REAL, tmp_min_sd REAL,
+    pcp_ave REAL, pcp_sd REAL, pcp_skew REAL,
+    wet_dry REAL, wet_wet REAL, pcp_days REAL, pcp_hhr REAL,
+    slr_ave REAL, dew_ave REAL, wnd_ave REAL
+  )")
+
+  # Insert two WGN stations
+  DBI::dbExecute(con, "INSERT INTO wgn_cfsr_world VALUES
+    (1, 'wgn_s1', -38.1, 176.3, 350.0, 30),
+    (2, 'wgn_s2', -39.5, 177.0, 120.0, 25)")
+
+  # Insert 12 monthly rows for each station (use simple placeholder values)
+  for (wgn_id in 1:2) {
+    for (month in 1:12) {
+      DBI::dbExecute(con,
+        "INSERT INTO wgn_cfsr_world_mon
+         (wgn_id, month, tmp_max_ave, tmp_min_ave, tmp_max_sd, tmp_min_sd,
+          pcp_ave, pcp_sd, pcp_skew, wet_dry, wet_wet, pcp_days, pcp_hhr,
+          slr_ave, dew_ave, wnd_ave)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        params = list(wgn_id, month,
+                      20.0 + month * 0.1, 10.0 + month * 0.1,
+                      2.0, 1.5,
+                      50.0, 10.0, 0.5,
+                      0.3, 0.4, 8.0, 15.0,
+                      18.0, 12.0, 3.0))
+    }
+  }
+
+  wgn_db_path
+}
+
+test_that("get_wgn_cfsr_world inserts WGN data into weather_wgn_cli", {
+  project <- create_weather_test_project()
+  wgn_db <- create_mock_wgn_db()
+  on.exit({
+    unlink(project$db_file)
+    unlink(wgn_db)
+  })
+
+  # Two stations - both nearest to wgn_s1 (-38.1, 176.3)
+  stations <- data.frame(
+    lat = c(-38.1, -38.15),
+    lon = c(176.3, 176.35),
+    stringsAsFactors = FALSE
+  )
+
+  result <- get_wgn_cfsr_world(project, stations, wgn_db)
+
+  # Returns project invisibly
+  expect_identical(result, project)
+
+  # One unique WGN site should have been written
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  wgn_rows <- DBI::dbGetQuery(con, "SELECT * FROM weather_wgn_cli")
+  expect_equal(nrow(wgn_rows), 1)
+  expect_equal(wgn_rows$name[1], "wgn_s1")
+  expect_equal(wgn_rows$rain_yrs[1], 30)
+
+  mon_rows <- DBI::dbGetQuery(con, "SELECT * FROM weather_wgn_cli_mon")
+  expect_equal(nrow(mon_rows), 12)
+})
+
+test_that("get_wgn_cfsr_world writes two unique WGN sites when stations differ", {
+  project <- create_weather_test_project()
+  wgn_db <- create_mock_wgn_db()
+  on.exit({
+    unlink(project$db_file)
+    unlink(wgn_db)
+  })
+
+  # One station near wgn_s1, one near wgn_s2
+  stations <- data.frame(
+    lat = c(-38.1, -39.5),
+    lon = c(176.3, 177.0),
+    stringsAsFactors = FALSE
+  )
+
+  get_wgn_cfsr_world(project, stations, wgn_db)
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  wgn_rows <- DBI::dbGetQuery(con, "SELECT * FROM weather_wgn_cli ORDER BY id")
+  expect_equal(nrow(wgn_rows), 2)
+  expect_equal(sort(wgn_rows$name), c("wgn_s1", "wgn_s2"))
+
+  mon_rows <- DBI::dbGetQuery(con, "SELECT * FROM weather_wgn_cli_mon")
+  expect_equal(nrow(mon_rows), 24)  # 12 months x 2 stations
+})
+
+test_that("get_wgn_cfsr_world is idempotent (INSERT OR IGNORE)", {
+  project <- create_weather_test_project()
+  wgn_db <- create_mock_wgn_db()
+  on.exit({
+    unlink(project$db_file)
+    unlink(wgn_db)
+  })
+
+  stations <- data.frame(lat = -38.1, lon = 176.3, stringsAsFactors = FALSE)
+
+  get_wgn_cfsr_world(project, stations, wgn_db)
+  get_wgn_cfsr_world(project, stations, wgn_db)  # second call must not duplicate
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  expect_equal(nrow(DBI::dbGetQuery(con, "SELECT * FROM weather_wgn_cli")), 1)
+  expect_equal(nrow(DBI::dbGetQuery(con, "SELECT * FROM weather_wgn_cli_mon")), 12)
+})
+
+test_that("get_wgn_cfsr_world validates inputs", {
+  project <- create_weather_test_project()
+  wgn_db <- create_mock_wgn_db()
+  on.exit({
+    unlink(project$db_file)
+    unlink(wgn_db)
+  })
+
+  # Not a data.frame
+  expect_error(get_wgn_cfsr_world(project, "not_a_df", wgn_db),
+               "non-empty data.frame")
+
+  # Empty data.frame
+  expect_error(get_wgn_cfsr_world(project, data.frame(), wgn_db),
+               "non-empty data.frame")
+
+  # Missing required columns
+  expect_error(
+    get_wgn_cfsr_world(project, data.frame(x = 1), wgn_db),
+    "missing required columns"
+  )
+
+  # Non-existent WGN database
+  stations <- data.frame(lat = -38.1, lon = 176.3)
+  expect_error(get_wgn_cfsr_world(project, stations, "/no/such/file.sqlite"),
+               "not found")
+})
+
