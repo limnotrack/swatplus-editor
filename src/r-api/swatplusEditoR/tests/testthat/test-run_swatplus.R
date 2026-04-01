@@ -96,7 +96,7 @@ test_that("run_swatplus executes SWAT+ simulation", {
   list.files(output_dir)  # Debug: check files before running
 
   issues <- check_swatplus(project = project, output_dir = output_dir)
-    result <- run_swatplus(swat_exe = exe, working_dir = output_dir,
+  result <- run_swatplus(swat_exe = exe, working_dir = output_dir,
                          verbose = TRUE)
   readLines(result$stdout_file)  # Debug: print stdout for troubleshooting
 
