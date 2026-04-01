@@ -455,6 +455,14 @@ get_wgn_cfsr_world <- function(project, stations, wgn_db) {
               call. = FALSE)
     })
   }
+  
+  # Update wgn column in weather_sta_cli with matched WGN station IDs
+  for (i in seq_len(nrow(stations))) {
+    wgn_id <- matched_wgn$name[i]
+    execute_db(proj_con,
+      "UPDATE weather_sta_cli SET wgn_id = ? WHERE id = ?",
+      params = list(wgn_id, stations$id[i]))
+  }
 
   message("Inserted ", n_inserted, " WGN station(s) from wgn_cfsr_world into ",
           "weather_wgn_cli")
