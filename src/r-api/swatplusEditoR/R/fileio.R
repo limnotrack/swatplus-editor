@@ -264,15 +264,23 @@ swat_write_table <- function(con, table_name, file_path,
 #' @return Character vector of file names.
 #' @keywords internal
 get_cio_file_names <- function(con, section) {
-  sql <- "SELECT f.file_name FROM file_cio f
+  # 1. Fixed the column name to default_file_name
+  sql <- "SELECT f.default_file_name FROM file_cio f
           JOIN file_cio_classification c ON f.classification_id = c.id
           WHERE c.name = ? ORDER BY f.order_in_class"
+  
   result <- tryCatch(
     query_db(con, sql, params = list(section)),
-    error = function(e) data.frame(file_name = character(0))
+    error = function(e) {
+      message("Database error: ", e$message) # Added message to see if it's actually crashing
+      return(data.frame(default_file_name = character(0)))
+    }
   )
-  if (nrow(result) == 0) return(character(0))
-  result$file_name
+  
+  if (is.null(result) || nrow(result) == 0) return(character(0))
+  
+  # 2. Match the column name here as well
+  result$default_file_name
 }
 
 #' Get count of rows in a table (safely)
