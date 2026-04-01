@@ -92,6 +92,7 @@ test_that("run_swatplus executes SWAT+ simulation", {
 
   write_config_files(project, output_dir = output_dir,
                      weather_dir = era5_dir)
+  list.files(output_dir)  # Debug: check files before running
 
   result <- run_swatplus(swat_exe = exe, working_dir = output_dir,
                          verbose = TRUE)
