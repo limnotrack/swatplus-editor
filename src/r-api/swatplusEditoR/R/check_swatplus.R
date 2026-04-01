@@ -16,7 +16,7 @@ check_swatplus <- function(project, output_dir) {
       return(NULL)
     }
     tryCatch(
-      read.table(path, skip = skip, header = TRUE, ...),
+      read.table(path, skip = skip, header = TRUE, fill = TRUE, ...),
       error = function(e) {
         message("  [READ ERROR] ", file, ": ", e$message)
         NULL
@@ -36,9 +36,9 @@ check_swatplus <- function(project, output_dir) {
   if (!is.null(cnt)) {
     checks <- list(
       hru     = list(file = "hru-data.hru", col = "hru"),
-      rtu     = list(file = "rout_unit.ele", col = "rtu"),
+      rtu     = list(file = "rout_unit.ele", col = "hru"),
       aqu     = list(file = "aquifer.aqu",   col = "aqu"),
-      cha     = list(file = "chandeg.con",   col = "cha")
+      cha     = list(file = "chandeg.con",   col = "lcha")
     )
     
     for (nm in names(checks)) {
