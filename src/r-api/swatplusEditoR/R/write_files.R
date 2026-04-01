@@ -120,7 +120,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
   update_gwflow_codes_bsn(con)
   
   # Helper to get file names from file_cio table
-  get_files <- function(section, n) {
+  get_files <- function(con, section, n) {
     fnames <- get_cio_file_names(con, section)
     if (length(fnames) < n) {
       # Pad with nulls
@@ -135,7 +135,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
   # ---- SIMULATION section ----
   message("  Writing simulation files...")
   if (has_cio) {
-    files <- get_files("simulation", 5)
+    files <- get_files(con = con, section = "simulation", 5)
     write_section_file(con, files[1], output_dir, v, sv,
                        writer = write_time_sim)
     write_section_file(con, files[2], output_dir, v, sv,
@@ -157,7 +157,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
   # ---- CLIMATE section ----
   message("  Writing climate files...")
   if (has_cio) {
-    files <- get_files("climate", 9)
+    files <- get_files(con = con, section = "climate", n = 9)
     if (weather_data_format == "netcdf") {
       write_section_file(con, "netcdf.ncw", output_dir, v, sv,
                          writer = write_weather_sta_cli)
