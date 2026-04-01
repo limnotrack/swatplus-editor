@@ -250,8 +250,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
   # ---- ROUTING UNIT section ----
   message("  Writing routing unit files...")
   write_table_section(con, output_dir, v, sv, has_cio, "routing_unit", list(
-    list(tbl = "rout_unit_def_con", file = "rout_unit.def",
-         query_tbl = "rout_unit_con"),
+    list(tbl = "rout_unit_ele", file = "rout_unit.def"),
     list(tbl = "rout_unit_ele", file = "rout_unit.ele"),
     list(tbl = "rout_unit_rtu", file = "rout_unit.rtu",
          query = "SELECT r.id, r.name, r.name as define,
@@ -477,7 +476,14 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "ch_catunit_ele", file = "ch_catunit.ele"),
     list(tbl = "ch_catunit_def", file = "ch_catunit.def"),
     list(tbl = "ch_reg_def", file = "ch_reg.def"),
-    list(tbl = "aqu_catunit_ele", file = "aqu_catunit.ele"),
+    list(tbl = "aquifer_con", file = "aqu_catunit.ele",
+         query = paste(
+           "SELECT ac.id, ac.name, 'aqu' as obj_typ, ac.id as obj_typ_no,",
+           "CASE WHEN (SELECT COALESCE(SUM(area), 0) FROM rout_unit_con) > 0",
+           "     THEN ac.area / (SELECT SUM(area) FROM rout_unit_con)",
+           "     ELSE 0.0 END as bsn_frac,",
+           "0.0 as sub_frac, 0.0 as reg_frac",
+           "FROM aquifer_con ac ORDER BY ac.id")),
     list(tbl = "aqu_catunit_def", file = "aqu_catunit.def"),
     list(tbl = "aqu_reg_def", file = "aqu_reg.def"),
     list(tbl = "res_catunit_ele", file = "res_catunit.ele"),
@@ -1341,6 +1347,17 @@ write_file_cio_from_db <- function(con, file_path, version, swat_version,
     
     writeLines(line, f)
   }
+
+  # Ensure path entries appear even if missing from file_cio_classification in DB
+  # (rQSWATPlus may use an older database without these entries)
+  db_class_names <- classes$name
+  expected_paths <- c("pcp_path", "tmp_path", "slr_path", "hmd_path", "wnd_path", "out_path")
+  for (pn in expected_paths) {
+    if (!pn %in% db_class_names) {
+      writeLines(paste0(swat_string_pad(pn, align = "left"),
+                        swat_string_pad(SWAT_NULL_STR, align = "left")), f)
+    }
+  }
 }
 
 #' Get file.cio condition flags for each classification
@@ -1348,12 +1365,27 @@ write_file_cio_from_db <- function(con, file_path, version, swat_version,
 get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
   # Helper for safe count
   sc <- function(tbl) safe_count(con, tbl)
-  
+
+  # Helper: count rows in weather_sta_cli where a column has a non-null file ref
+  sc_wsta <- function(col) {
+    tryCatch({
+      r <- query_db(con, sprintf(
+        "SELECT COUNT(*) as cnt FROM weather_sta_cli WHERE %s IS NOT NULL AND %s NOT IN ('null', '')",
+        col, col))
+      r$cnt[1]
+    }, error = function(e) 0L)
+  }
+
+  # Per-file counts for decision tables
+  dtl_files <- tryCatch(
+    query_db(con, "SELECT DISTINCT file_name FROM d_table_dtl WHERE file_name IS NOT NULL")$file_name,
+    error = function(e) character(0))
+
   gwflow_on <- tryCatch({
     cfg <- query_db(con, "SELECT * FROM codes_bsn LIMIT 1")
     isTRUE(cfg$gwflow == 1)
   }, error = function(e) FALSE)
-  
+
   list(
     simulation = list(TRUE, TRUE, sc("object_prt") > 0, TRUE,
                       sc("constituents_cs") > 0),
@@ -1363,10 +1395,13 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
            sc("atmo_cli") > 0)
     } else {
       list(TRUE, TRUE,
-           sc("weather_file") > 0, sc("weather_file") > 0,
-           sc("weather_file") > 0, sc("weather_file") > 0,
-           sc("weather_file") > 0, sc("weather_file") > 0,
-           sc("atmo_cli") > 0)
+           sc_wsta("pet") > 0,  # pet.cli
+           sc_wsta("pcp") > 0,  # pcp.cli
+           sc_wsta("tmp") > 0,  # tmp.cli
+           sc_wsta("slr") > 0,  # slr.cli
+           sc_wsta("hmd") > 0,  # hmd.cli
+           sc_wsta("wnd") > 0,  # wnd.cli
+           sc("atmo_cli") > 0)  # atmodep.cli
     },
     connect = list(
       sc("hru_con") > 0, sc("hru_lte_con") > 0,
@@ -1377,17 +1412,21 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
       sc("exco_con") > 0, sc("delratio_con") > 0,
       sc("outlet_con") > 0, sc("chandeg_con") > 0),
     channel = list(
-      sc("initial_cha") > 0, sc("channel_cha") > 0,
-      sc("hydrology_cha") > 0, sc("sediment_cha") > 0,
-      sc("nutrients_cha") > 0, sc("channel_lte_cha") > 0,
-      sc("hyd_sed_lte_cha") > 0, sc("temperature_cha") > 0),
+      sc("initial_cha") > 0,
+      !is_lte && sc("channel_cha") > 0,       # standard only
+      !is_lte && sc("hydrology_cha") > 0,     # standard only
+      !is_lte && sc("sediment_cha") > 0,      # standard only
+      sc("nutrients_cha") > 0,
+      is_lte && sc("channel_lte_cha") > 0,   # lte only
+      is_lte && sc("hyd_sed_lte_cha") > 0,   # lte only
+      sc("temperature_cha") > 0),
     reservoir = list(
       sc("initial_res") > 0, sc("reservoir_res") > 0,
       sc("hydrology_res") > 0, sc("sediment_res") > 0,
       sc("nutrients_res") > 0, sc("weir_res") > 0,
       sc("wetland_wet") > 0, sc("hydrology_wet") > 0),
     routing_unit = list(
-      sc("rout_unit_def_con") > 0, sc("rout_unit_ele") > 0,
+      sc("rout_unit_ele") > 0, sc("rout_unit_ele") > 0,
       sc("rout_unit_rtu") > 0, sc("rout_unit_dr") > 0),
     hru = list(sc("hru_data_hru") > 0, sc("hru_lte_hru") > 0),
     exco = list(
@@ -1442,8 +1481,10 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
       sc("nutrients_sol") > 0,
       is_lte && sc("soils_lte_sol") > 0),
     decision_table = list(
-      sc("d_table_dtl") > 0, sc("d_table_dtl") > 0,
-      sc("d_table_dtl") > 0, sc("d_table_dtl") > 0),
+      "lum.dtl"     %in% dtl_files,   # lum.dtl
+      "res_rel.dtl" %in% dtl_files,   # res_rel.dtl
+      "scen_lu.dtl" %in% dtl_files,   # scen_lu.dtl
+      "flo_con.dtl" %in% dtl_files),  # flo_con.dtl
     regions = list(
       sc("ls_unit_ele") > 0, sc("ls_unit_def") > 0,
       sc("ls_reg_ele") > 0, sc("ls_reg_def") > 0, FALSE,
