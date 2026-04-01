@@ -87,6 +87,11 @@ write_direct <- function(project, output_dir, swat_version = "60",
   # Ensure all required tables exist and are populated with reference data.
   ensure_write_tables(con)
 
+  # Populate SWAT+ model tables from GIS data (channels, HRUs, routing units,
+  # aquifers, etc.) if they are empty.  This mirrors the Python SWAT+ Editor
+  # import_gis.py::insert_default() step.
+  populate_from_gis(con)
+
   tables <- list_db_tables(con)
   
   # Read project config
@@ -189,8 +194,16 @@ write_direct <- function(project, output_dir, swat_version = "60",
   message("  Writing channel files...")
   write_table_section(con, output_dir, v, sv, has_cio, section = "channel",
                       specs =  list(
-                        list(tbl = "initial_cha", file = "initial.cha"),
-                        list(tbl = "channel_cha", file = "channel-lte.cha",
+                        list(tbl = "initial_cha", file = "initial.cha",
+                             ignore_id = TRUE,
+                             query = "SELECT i.id, i.name,
+                    COALESCE(o.name, 'null') as org_min,
+                    'null' as pest, 'null' as path,
+                    'null' as hmet, 'null' as salt
+                  FROM initial_cha i
+                  LEFT JOIN om_water_ini o ON i.org_min_id = o.id
+                  ORDER BY i.id"),
+                        list(tbl = "channel_cha", file = "channel.cha",
                              query = "SELECT c.id, c.name,
                     COALESCE(i.name, 'null') as init,
                     COALESCE(h.name, 'null') as hyd,
@@ -206,8 +219,18 @@ write_direct <- function(project, output_dir, swat_version = "60",
                              non_zero_min = c("wd", "dp", "slp", "len", "fps")),
                         list(tbl = "sediment_cha", file = "sediment.cha"),
                         list(tbl = "nutrients_cha", file = "nutrients.cha"),
-                        list(tbl = "channel_lte_cha", file = "channel-lte.cha"),
-                        list(tbl = "hyd_sed_lte_cha", file = "hyd-sed-lte.cha"),
+                        list(tbl = "channel_lte_cha", file = "channel-lte.cha",
+                             query = "SELECT c.id, c.name,
+                    COALESCE(i.name, 'null') as cha_ini,
+                    COALESCE(h.name, 'null') as cha_hyd,
+                    'null' as cha_sed, 'null' as cha_nut
+                  FROM channel_lte_cha c
+                  LEFT JOIN initial_cha i ON c.init_id = i.id
+                  LEFT JOIN hyd_sed_lte_cha h ON c.hyd_id = h.id
+                  ORDER BY c.id"),
+                        list(tbl = "hyd_sed_lte_cha", file = "hyd-sed-lte.cha",
+                             ignore_id = TRUE,
+                             non_zero_min = c("wd", "dp", "slp", "len")),
                         list(tbl = "temperature_cha", file = "temperature.cha")
                       ))
   
@@ -230,14 +253,40 @@ write_direct <- function(project, output_dir, swat_version = "60",
     list(tbl = "rout_unit_def_con", file = "rout_unit.def",
          query_tbl = "rout_unit_con"),
     list(tbl = "rout_unit_ele", file = "rout_unit.ele"),
-    list(tbl = "rout_unit_rtu", file = "rout_unit.rtu"),
+    list(tbl = "rout_unit_rtu", file = "rout_unit.rtu",
+         query = "SELECT r.id, r.name, r.name as define,
+           'null' as dlr,
+           COALESCE(t.name, 'null') as topo,
+           COALESCE(f.name, 'null') as field
+         FROM rout_unit_rtu r
+         LEFT JOIN topography_hyd t ON r.topo_id = t.id
+         LEFT JOIN field_fld f ON r.field_id = f.id
+         ORDER BY r.id"),
     list(tbl = "rout_unit_dr", file = "rout_unit.dr")
   ))
-  
+
   # ---- HRU section ----
   message("  Writing HRU files...")
   write_table_section(con, output_dir, v, sv, has_cio, "hru", list(
-    list(tbl = "hru_data_hru", file = "hru-data.hru"),
+    list(tbl = "hru_data_hru", file = "hru-data.hru",
+         query = "SELECT h.id, h.name,
+           COALESCE(t.name, 'null') as topo,
+           COALESCE(hy.name, 'null') as hydro,
+           COALESCE(s.name, 'null') as soil,
+           COALESCE(l.name, 'null') as lu_mgt,
+           COALESCE(sp.name, 'null') as soil_plant_init,
+           COALESCE(h.surf_stor, 'null') as surf_stor,
+           COALESCE(sn.name, 'null') as snow,
+           COALESCE(f.name, '0') as field
+         FROM hru_data_hru h
+         LEFT JOIN topography_hyd t ON h.topo_id = t.id
+         LEFT JOIN hydrology_hyd hy ON h.hydro_id = hy.id
+         LEFT JOIN soils_sol s ON h.soil_id = s.id
+         LEFT JOIN landuse_lum l ON h.lu_mgt_id = l.id
+         LEFT JOIN soil_plant_ini sp ON h.soil_plant_ini_id = sp.id
+         LEFT JOIN snow_sno sn ON h.snow_id = sn.id
+         LEFT JOIN field_fld f ON h.field_id = f.id
+         ORDER BY h.id"),
     list(tbl = "hru_lte_hru", file = "hru-lte.hru")
   ))
   
@@ -254,8 +303,25 @@ write_direct <- function(project, output_dir, swat_version = "60",
   # ---- AQUIFER section ----
   message("  Writing aquifer files...")
   write_table_section(con, output_dir, v, sv, has_cio, "aquifer", list(
-    list(tbl = "initial_aqu", file = "initial.aqu"),
-    list(tbl = "aquifer_aqu", file = "aquifer.aqu")
+    list(tbl = "initial_aqu", file = "initial.aqu",
+         ignore_id = TRUE,
+         query = "SELECT i.id, i.name,
+           COALESCE(o.name, 'null') as org_min,
+           'null' as pest, 'null' as path,
+           'null' as hmet, 'null' as salt
+         FROM initial_aqu i
+         LEFT JOIN om_water_ini o ON i.org_min_id = o.id
+         ORDER BY i.id"),
+    list(tbl = "aquifer_aqu", file = "aquifer.aqu",
+         query = "SELECT a.id, a.name,
+           COALESCE(i.name, 'null') as init,
+           a.gw_flo, a.dep_bot, a.dep_wt, a.no3_n, a.sol_p,
+           0.0 as carbon, 50.0 as flo_dist,
+           a.bf_max, a.alpha_bf, a.revap, a.rchg_dp,
+           a.spec_yld, a.hl_no3n, a.flo_min, a.revap_min
+         FROM aquifer_aqu a
+         LEFT JOIN initial_aqu i ON a.init_id = i.id
+         ORDER BY a.id")
   ))
   
   # ---- HERD section ----
@@ -1321,7 +1387,7 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
       sc("nutrients_res") > 0, sc("weir_res") > 0,
       sc("wetland_wet") > 0, sc("hydrology_wet") > 0),
     routing_unit = list(
-      sc("rout_unit_ele") > 0, sc("rout_unit_ele") > 0,
+      sc("rout_unit_def_con") > 0, sc("rout_unit_ele") > 0,
       sc("rout_unit_rtu") > 0, sc("rout_unit_dr") > 0),
     hru = list(sc("hru_data_hru") > 0, sc("hru_lte_hru") > 0),
     exco = list(
