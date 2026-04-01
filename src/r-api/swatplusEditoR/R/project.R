@@ -1045,7 +1045,7 @@ populate_from_gis <- function(con) {
       if (is.na(src_id) || is.na(snk_id) || is.null(typ)) next
       key <- as.character(src_id)
       orders[[key]] <- if (!is.null(orders[[key]])) orders[[key]] + 1L else 1L
-      hyd <- if (!is.null(r$hyd_type) && !is.na(r$hyd_type)) r$hyd_type else "tot"
+      hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ)) r$hyd_typ else "tot"
       row_df <- data.frame(
         src_id, orders[[key]], typ, snk_id, hyd, r$percent / 100,
         stringsAsFactors = FALSE)
