@@ -360,7 +360,7 @@ populate_from_gis <- function(con) {
 .populate_gis_standard <- function(con) {
   .gis_insert_routing_units(con)
   .gis_insert_om_water(con)
-  .gis_insert_channels_lte(con)
+  .gis_insert_channels(con)
   .gis_insert_reservoirs(con)
   .gis_insert_recall(con)
   .gis_insert_hrus(con)
@@ -466,7 +466,100 @@ populate_from_gis <- function(con) {
 }
 
 # --------------------------------------------------------------------------
-# Step 3: LTE channels from gis_channels (used for BOTH standard and LTE)
+# Step 3a: Standard channels from gis_channels
+# Schema:
+#   initial_cha:    (id, name, org_min_id)
+#   hydrology_cha:  (id, name, wd, dp, slp, len, mann, k)
+#   sediment_cha:   (id, name)
+#   nutrients_cha:  (id, name)
+#   channel_cha:    (id, name, init_id, hyd_id, sed_id, nut_id)
+#   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule)
+# --------------------------------------------------------------------------
+.gis_insert_channels <- function(con) {
+  if (.gis_count(con, "channel_cha") > 0L) return(invisible(NULL))
+  chas <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT * FROM gis_channels ORDER BY id"),
+    error = function(e) NULL)
+  if (is.null(chas) || nrow(chas) == 0L) return(invisible(NULL))
+
+  # Ensure om_water_ini exists
+  .gis_insert_om_water(con)
+  om_id <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM om_water_ini LIMIT 1")$id[1L],
+    error = function(e) 1L)
+
+  # One default initial_cha row
+  if (.gis_count(con, "initial_cha") == 0L) {
+    .gis_exec(con, paste0(
+      "INSERT INTO initial_cha (id, name, org_min_id) VALUES (1, 'initcha1', ",
+      om_id, ")"))
+  }
+  init_id <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
+    error = function(e) 1L)
+
+  # One default nutrients_cha row
+  if (.gis_count(con, "nutrients_cha") == 0L) {
+    .gis_exec(con, "INSERT INTO nutrients_cha (id, name) VALUES (1, 'nutcha1')")
+  }
+  nut_id <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM nutrients_cha LIMIT 1")$id[1L],
+    error = function(e) 1L)
+
+  # One default sediment_cha row
+  if (.gis_count(con, "sediment_cha") == 0L) {
+    .gis_exec(con, "INSERT INTO sediment_cha (id, name) VALUES (1, 'sedcha1')")
+  }
+  sed_id <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM sediment_cha LIMIT 1")$id[1L],
+    error = function(e) 1L)
+
+  n   <- nrow(chas)
+  cnt <- max(chas$id)
+  idx <- seq_len(n)
+
+  # Standard hydrology_cha: per-channel geometry-based parameters
+  hyds <- data.frame(
+    id       = idx,
+    name     = mapply(.gis_name, "hyd", chas$id, cnt),
+    wd       = pmax(chas$wid2, 0.1),
+    dp       = pmax(chas$dep2, 0.1),
+    slp      = pmax(chas$slo2 / 100, 0.0001),
+    len      = pmax(chas$len2 / 1000, 0.001),
+    mann     = 0.05,
+    k        = 1.0,
+    stringsAsFactors = FALSE)
+
+  # Standard channel_cha: references hydrology, sediment, nutrients, initial
+  chan_chas <- data.frame(
+    id      = idx,
+    name    = mapply(.gis_name, "cha", chas$id, cnt),
+    init_id = init_id,
+    hyd_id  = idx,
+    sed_id  = sed_id,
+    nut_id  = nut_id,
+    stringsAsFactors = FALSE)
+
+  # chandeg_con: channel connections (same structure for standard and LTE)
+  chan_cons <- data.frame(
+    id     = idx,
+    name   = mapply(.gis_name, "cha", chas$id, cnt),
+    gis_id = chas$id,
+    lat    = chas$midlat,
+    lon    = chas$midlon,
+    area   = chas$areac,
+    ovfl   = 0L,
+    rule   = 0L,
+    stringsAsFactors = FALSE)
+
+  .gis_write(con, "hydrology_cha",  hyds)
+  .gis_write(con, "channel_cha",    chan_chas)
+  .gis_write(con, "chandeg_con",    chan_cons)
+  invisible(NULL)
+}
+
+# --------------------------------------------------------------------------
+# Step 3b: LTE channels from gis_channels (used for LTE mode only)
 # Schema:
 #   initial_cha:    (id, name, org_min_id)
 #   hyd_sed_lte_cha:(id, name, wd, dp, slp, len, mann, k, cov_fact, wd_rto,
@@ -1234,10 +1327,11 @@ populate_from_gis <- function(con) {
   lhru_n <- .gis_count(con, "hru_lte_con")
   rtu_n  <- .gis_count(con, "rout_unit_con")
   aqu_n  <- .gis_count(con, "aquifer_con")
-  cha_n  <- .gis_count(con, "chandeg_con")
+  cha_n  <- .gis_count(con, "channel_con")
   res_n  <- .gis_count(con, "reservoir_con")
   rec_n  <- .gis_count(con, "recall_con")
-  obj_n  <- hru_n + lhru_n + rtu_n + aqu_n + cha_n + res_n + rec_n
+  lcha_n <- .gis_count(con, "chandeg_con")
+  obj_n  <- hru_n + lhru_n + rtu_n + aqu_n + cha_n + res_n + rec_n + lcha_n
   .gis_exec(con, paste0("
     UPDATE object_cnt SET
       obj  = ", obj_n,  ",
@@ -1247,7 +1341,8 @@ populate_from_gis <- function(con) {
       aqu  = ", aqu_n,  ",
       cha  = ", cha_n,  ",
       res  = ", res_n,  ",
-      rec  = ", rec_n,  "
+      rec  = ", rec_n,  ",
+      lcha = ", lcha_n, "
     WHERE id = (SELECT id FROM object_cnt LIMIT 1)"))
   invisible(NULL)
 }

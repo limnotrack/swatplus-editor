@@ -40,6 +40,49 @@ create_gis_test_project <- function() {
   project
 }
 
+# Helper to create a test project with required tables for standard channel testing
+create_channel_test_project <- function() {
+  project <- create_gis_test_project()
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+
+  # Create the required channel tables
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS channel_cha (
+    id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+    init_id INTEGER, hyd_id INTEGER, sed_id INTEGER, nut_id INTEGER)")
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS hydrology_cha (
+    id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+    wd REAL, dp REAL, slp REAL, len REAL, mann REAL, k REAL)")
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS sediment_cha (
+    id INTEGER PRIMARY KEY, name TEXT UNIQUE)")
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS nutrients_cha (
+    id INTEGER PRIMARY KEY, name TEXT UNIQUE)")
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS initial_cha (
+    id INTEGER PRIMARY KEY, name TEXT, org_min_id INTEGER)")
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS om_water_ini (
+    id INTEGER PRIMARY KEY, name TEXT)")
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS chandeg_con (
+    id INTEGER PRIMARY KEY, name TEXT, gis_id INTEGER,
+    area REAL, lat REAL, lon REAL, elev REAL, ovfl INTEGER, rule INTEGER)")
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS object_cnt (
+    id INTEGER PRIMARY KEY, name TEXT, ls_area REAL, tot_area REAL,
+    obj INTEGER DEFAULT 0, hru INTEGER DEFAULT 0, lhru INTEGER DEFAULT 0,
+    rtu INTEGER DEFAULT 0, gwfl INTEGER DEFAULT 0, aqu INTEGER DEFAULT 0,
+    cha INTEGER DEFAULT 0, res INTEGER DEFAULT 0, rec INTEGER DEFAULT 0,
+    exco INTEGER DEFAULT 0, dlr INTEGER DEFAULT 0, can INTEGER DEFAULT 0,
+    pmp INTEGER DEFAULT 0, out INTEGER DEFAULT 0, lcha INTEGER DEFAULT 0,
+    aqu2d INTEGER DEFAULT 0, hrd INTEGER DEFAULT 0, wro INTEGER DEFAULT 0)")
+  DBI::dbExecute(con, "INSERT OR IGNORE INTO object_cnt (id, name) VALUES (1, 'test')")
+  DBI::dbExecute(con, "INSERT OR IGNORE INTO om_water_ini (id, name) VALUES (1, 'omwater1')")
+
+  # Also create channel_con (LTE channel connection table) for counting
+
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS channel_con (
+    id INTEGER PRIMARY KEY, name TEXT)")
+
+  DBI::dbDisconnect(con)
+  project
+}
+
 test_that("read_gis_data returns all GIS tables", {
   project <- create_gis_test_project()
   on.exit(unlink(project$db_file))
@@ -89,4 +132,92 @@ test_that("read_gis_routing returns correct data", {
   expect_equal(nrow(routing), 1)
   expect_equal(routing$sourcecat[1], "sub")
   expect_equal(routing$percent[1], 100.0)
+})
+
+# -------------------------------------------------------------------
+# Tests for standard channel insertion (.gis_insert_channels)
+# -------------------------------------------------------------------
+
+test_that(".gis_insert_channels populates channel_cha and hydrology_cha", {
+  project <- create_channel_test_project()
+  on.exit(unlink(project$db_file))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Call the internal function
+  swatplusEditoR:::.gis_insert_channels(con)
+
+  # channel_cha should have 1 row (one channel from gis_channels)
+  cha <- DBI::dbGetQuery(con, "SELECT * FROM channel_cha")
+  expect_equal(nrow(cha), 1)
+  expect_true(grepl("^cha", cha$name[1]))
+  expect_equal(cha$hyd_id[1], 1L)
+
+  # hydrology_cha should have 1 row
+  hyd <- DBI::dbGetQuery(con, "SELECT * FROM hydrology_cha")
+  expect_equal(nrow(hyd), 1)
+  expect_equal(hyd$wd[1], 5.0)
+  expect_equal(hyd$dp[1], 1.5)
+  expect_true(hyd$mann[1] == 0.05)
+
+  # sediment_cha should have 1 default row
+  sed <- DBI::dbGetQuery(con, "SELECT * FROM sediment_cha")
+  expect_equal(nrow(sed), 1)
+
+  # nutrients_cha should have 1 default row
+  nut <- DBI::dbGetQuery(con, "SELECT * FROM nutrients_cha")
+  expect_equal(nrow(nut), 1)
+
+  # chandeg_con should have 1 row
+  chandeg <- DBI::dbGetQuery(con, "SELECT * FROM chandeg_con")
+  expect_equal(nrow(chandeg), 1)
+  expect_equal(chandeg$gis_id[1], 1L)
+
+  # channel_lte_cha should NOT be populated (standard mode)
+  lte_count <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT COUNT(*) AS n FROM channel_lte_cha")$n[1],
+    error = function(e) 0L)
+  expect_equal(lte_count, 0L)
+})
+
+test_that(".gis_insert_channels is idempotent", {
+  project <- create_channel_test_project()
+  on.exit(unlink(project$db_file))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  swatplusEditoR:::.gis_insert_channels(con)
+  swatplusEditoR:::.gis_insert_channels(con)  # second call should be no-op
+
+  cha <- DBI::dbGetQuery(con, "SELECT * FROM channel_cha")
+  expect_equal(nrow(cha), 1)
+})
+
+# -------------------------------------------------------------------
+# Tests for object_cnt update
+# -------------------------------------------------------------------
+
+test_that(".gis_update_object_cnt sets lcha from chandeg_con count", {
+  project <- create_channel_test_project()
+  on.exit(unlink(project$db_file))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Insert a channel to populate chandeg_con
+  swatplusEditoR:::.gis_insert_channels(con)
+
+  # Update object counts
+  swatplusEditoR:::.gis_update_object_cnt(con)
+
+  cnt <- DBI::dbGetQuery(con, "SELECT * FROM object_cnt LIMIT 1")
+
+  # lcha should be 1 (from 1 row in chandeg_con)
+  expect_equal(cnt$lcha, 1L)
+  # cha should be 0 (channel_con is empty for standard mode)
+  expect_equal(cnt$cha, 0L)
+  # obj should include lcha in the total
+  expect_true(cnt$obj >= cnt$lcha)
 })
