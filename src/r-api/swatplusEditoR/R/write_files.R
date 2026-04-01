@@ -84,6 +84,9 @@ write_direct <- function(project, output_dir, swat_version = "60",
   con <- open_project_db(project$db_file)
   on.exit(close_db(con))
 
+  # Ensure all required tables exist and are populated with reference data.
+  ensure_write_tables(con)
+
   tables <- list_db_tables(con)
   
   # Read project config
