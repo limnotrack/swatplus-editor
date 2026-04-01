@@ -205,6 +205,89 @@ check_swatplus <- function(project, output_dir) {
     }
   }
   
+  # ── 9. file.cio validation ───────────────────────────────────────────────
+  cat("\n-- 9. file.cio validation --\n")
+  
+  cio_path <- file.path(output_dir, "file.cio")
+  
+  if (!file.exists(cio_path)) {
+    msg <- "  [MISSING] file.cio not found"
+    cat(msg, "\n")
+    issues[[length(issues) + 1]] <- msg
+  } else {
+    
+    cio_lines <- readLines(cio_path)
+    
+    # Check editor version resolved (vNA indicates a write failure)
+    if (grepl("vNA", cio_lines[1])) {
+      msg <- "  [WARN] file.cio header shows 'vNA' - editor version not resolved during write"
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    }
+    
+    # Parse entries: split each line into category + file entries
+    # Skip title line (line 1)
+    cio_entries <- lapply(cio_lines[-1], function(l) {
+      parts <- strsplit(trimws(l), "\\s+")[[1]]
+      list(category = parts[1], files = parts[-1])
+    })
+    
+    # Count how many categories are all-null
+    all_null <- sapply(cio_entries, function(e) all(e$files == "null"))
+    n_all_null   <- sum(all_null)
+    n_categories <- length(cio_entries)
+    
+    if (n_all_null == n_categories) {
+      msg <- "  [ERROR] file.cio has all entries set to null - no input files will be read"
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else if (n_all_null > 0) {
+      cat(sprintf("  [WARN] %d of %d categories are fully null\n", n_all_null, n_categories))
+    }
+    
+    # Check that files referenced in file.cio actually exist in output_dir
+    existing_files <- list.files(output_dir)
+    referenced     <- unique(unlist(lapply(cio_entries, `[[`, "files")))
+    referenced     <- referenced[referenced != "null"]
+    
+    missing_refs <- setdiff(referenced, existing_files)
+    if (length(missing_refs) > 0) {
+      msg <- sprintf("  [MISSING] %d file(s) referenced in file.cio not found on disk",
+                     length(missing_refs))
+      cat(msg, "\n")
+      cat("  Missing:", paste(head(missing_refs, 5), collapse = ", "), "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else if (length(referenced) > 0) {
+      cat(sprintf("  [OK] All %d files referenced in file.cio exist on disk\n",
+                  length(referenced)))
+    }
+    
+    # Check key categories have non-null entries
+    key_categories <- c("simulation", "basin", "climate", "connect",
+                        "hru", "aquifer", "soils", "hydrology")
+    
+    category_names <- sapply(cio_entries, `[[`, "category")
+    
+    for (cat_name in key_categories) {
+      idx <- which(category_names == cat_name)
+      if (length(idx) == 0) {
+        msg <- sprintf("  [WARN] Category '%s' not found in file.cio", cat_name)
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat_files <- cio_entries[[idx]]$files
+        if (all(cat_files == "null")) {
+          msg <- sprintf("  [ERROR] Category '%s' is all null in file.cio", cat_name)
+          cat(msg, "\n")
+          issues[[length(issues) + 1]] <- msg
+        } else {
+          cat(sprintf("  [OK] %-20s %s\n", cat_name,
+                      paste(cat_files[cat_files != "null"], collapse = ", ")))
+        }
+      }
+    }
+  }
+  
   # ── Summary ───────────────────────────────────────────────────────────────
   cat("\n=== Summary ===\n")
   if (length(issues) == 0) {
