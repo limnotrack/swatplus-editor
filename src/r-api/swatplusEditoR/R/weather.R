@@ -343,6 +343,15 @@ set_weather_dir <- function(project, weather_dir) {
 #' }
 get_wgn_cfsr_world <- function(project, stations, wgn_db) {
   validate_project(project)
+  
+  # Open project database connectio
+  proj_con <- open_project_db(project$db_file)
+  on.exit(close_db(proj_con), add = TRUE)
+  
+  # Get stations from database
+  if (missing(stations)) {
+    stations <- query_db(proj_con, "SELECT id, name, lat, lon FROM weather_sta_cli")
+  }
 
   if (!is.data.frame(stations) || nrow(stations) == 0) {
     stop("stations must be a non-empty data.frame.", call. = FALSE)
@@ -399,9 +408,6 @@ get_wgn_cfsr_world <- function(project, stations, wgn_db) {
            "FROM wgn_cfsr_world_mon WHERE wgn_id IN (", id_list, ")"))
 
   # Write to project database
-  proj_con <- open_project_db(project$db_file)
-  on.exit(close_db(proj_con), add = TRUE)
-
   if (!table_exists(proj_con, "weather_wgn_cli")) {
     stop("weather_wgn_cli table not found in project database.", call. = FALSE)
   }
