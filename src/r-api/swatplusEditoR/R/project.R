@@ -216,3 +216,51 @@ get_project_info <- function(project) {
     config = config
   )
 }
+
+#' Ensure all required SWAT+ tables exist before writing files
+#'
+#' Delegates to the \code{ensure_write_tables()} function in \pkg{rQSWATPlus},
+#' which creates any missing tables that \code{\link{write_config_files}} needs
+#' and populates mandatory tables with sensible defaults (mirroring the Python
+#' SWAT+ Editor \code{setup.py} initialisation).  Tables that already exist
+#' are left untouched.
+#'
+#' @param con DBI connection to the project database.
+#' @return Invisible \code{NULL}.
+#' @keywords internal
+ensure_write_tables <- function(con) {
+  fn <- tryCatch(
+    get("ensure_write_tables", envir = asNamespace("rQSWATPlus")),
+    error = function(e) NULL
+  )
+  if (is.null(fn)) {
+    message("Note: rQSWATPlus::ensure_write_tables() not available; ",
+            "table initialization skipped.")
+    return(invisible(NULL))
+  }
+  fn(con)
+  invisible(NULL)
+}
+
+#' Populate reference/parameter tables from the SWAT+ datasets databases
+#'
+#' Delegates to the \code{populate_from_datasets()} function in
+#' \pkg{rQSWATPlus}, which copies reference data (plants, fertilizers,
+#' operations, land use, calibration parameters, etc.) from bundled databases
+#' into the project database.  Only empty or missing tables are populated;
+#' tables with existing data are left untouched.
+#'
+#' @param con DBI connection to the project database.
+#' @return Invisible \code{NULL}.
+#' @keywords internal
+populate_from_datasets <- function(con) {
+  fn <- tryCatch(
+    get("populate_from_datasets", envir = asNamespace("rQSWATPlus")),
+    error = function(e) NULL
+  )
+  if (is.null(fn)) {
+    return(invisible(NULL))
+  }
+  fn(con)
+  invisible(NULL)
+}
