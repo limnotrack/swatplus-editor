@@ -1324,7 +1324,7 @@ write_file_cio_from_db <- function(con, file_path, version, swat_version,
         }
         
         fname <- if (isTRUE(cond_met)) {
-          fn <- cf$file_name
+          fn <- cf$default_file_name
           if (is.null(fn) || is.na(fn) || fn == "") SWAT_NULL_STR else fn
         } else {
           SWAT_NULL_STR
