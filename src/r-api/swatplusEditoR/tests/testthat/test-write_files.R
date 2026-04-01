@@ -1,17 +1,37 @@
 # Test file writing functions
 library(testthat)
 create_write_test_project <- function() {
-  db_path <- tempfile(fileext = ".sqlite")
+  db_file <- tempfile(fileext = ".sqlite")
   project_dir <- tempdir()
+  
+  dem         <- system.file("extdata", "ravn_dem.tif",     package = "rQSWATPlus")
+  landuse     <- system.file("extdata", "ravn_landuse.tif", package = "rQSWATPlus")
+  soil        <- system.file("extdata", "ravn_soil.tif",    package = "rQSWATPlus")
+  lu_lookup   <- system.file("extdata", "ravn_landuse.csv", package = "rQSWATPlus")
+  soil_lookup <- system.file("extdata", "ravn_soil.csv",    package = "rQSWATPlus")
+  outlet      <- system.file("extdata", "ravn_outlet.shp",  package = "rQSWATPlus")
+  
 
-  project <- list(
+  project <- rQSWATPlus::qswat_setup(
     project_dir = project_dir,
-    db_file = db_path,
-    hru_data = NULL,
-    basin_data = NULL
-  )
+    dem_file = dem,
+    landuse_file = landuse,
+    soil_file = soil,
+    landuse_lookup = lu_lookup,
+    soil_lookup = soil_lookup,
+    outlet_file = outlet,
+    db_file = db_file
+  ) |> 
+    rQSWATPlus::qswat_delineate(threshold = 500, quiet = TRUE) |> 
+    rQSWATPlus::qswat_create_streams() |> 
+    rQSWATPlus::qswat_create_hrus() |> 
+    rQSWATPlus::qswat_write_database(overwrite = TRUE)
+  
+  con <- open_project_db(project$db_file)
+  DBI::dbListTables(con)
+  hru_data_hru <- DBI::dbReadTable(con, "hru_data_hru")
 
-  project <- create_project_db(project, db_path, overwrite = TRUE)
+  # project <- create_project_db(project, overwrite = TRUE)
 
   # Add simulation time
   set_simulation_time(project, day_start = 1, yrc_start = 2000,
