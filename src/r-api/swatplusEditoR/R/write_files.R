@@ -796,11 +796,11 @@ write_weather_sta_cli <- function(con, output_dir, version = NULL,
   if (!has_data(con, "weather_sta_cli")) return(invisible(NULL))
   
   # Join with wgn to get wgn name
-  sql <- "SELECT s.name, COALESCE(w.name, 'null') as wgn,
-                 s.pcp, s.tmp, s.slr, s.hmd, s.wnd, s.pet, s.atmo_dep
-          FROM weather_sta_cli s
-          LEFT JOIN weather_wgn_cli w ON s.wgn_id = w.id
-          ORDER BY s.id"
+  sql <- "SELECT s.name, w.name as wgn,
+               s.pcp, s.tmp, s.slr, s.hmd, s.wnd, s.pet, s.atmo_dep
+        FROM weather_sta_cli s
+        INNER JOIN weather_wgn_cli w ON s.wgn_id = w.name
+        ORDER BY s.id"
   stations <- tryCatch(query_db(con, sql), error = function(e) {
     # Fallback without join if wgn table doesn't exist
     query_db(con, "SELECT name, 'null' as wgn, pcp, tmp, slr, hmd, wnd, pet, atmo_dep
