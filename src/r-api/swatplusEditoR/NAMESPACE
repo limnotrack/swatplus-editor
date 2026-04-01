@@ -2,6 +2,7 @@
 
 export(add_weather_generators)
 export(add_weather_stations)
+export(check_swatplus)
 export(create_project_db)
 export(get_gwflow_base)
 export(get_gwflow_status)

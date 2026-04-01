@@ -1,8 +1,16 @@
+#' Check SWAT+ input file consistency
+#'
+#' @inheritParams write_config_files
+#'
+#' @returns A list of issues found, or an empty list if no issues detected. Each issue is a character string describing the problem.
+#' @export
+#'
+
 check_swatplus <- function(project, output_dir) {
   
   # Helper to read a SWAT+ text file (skip title + header)
-  read_swat <- function(file, output_dir, skip = 2, ...) {
-    path <- file.path(output_dir, file)
+  read_swat <- function(file, out_dir = output_dir, skip = 1, ...) {
+    path <- file.path(out_dir, file)
     if (!file.exists(path)) {
       message("  [MISSING] ", file)
       return(NULL)
@@ -23,7 +31,7 @@ check_swatplus <- function(project, output_dir) {
   # ── 1. Object counts ──────────────────────────────────────────────────────
   cat("-- 1. Object counts (object.cnt vs actual file rows) --\n")
   
-  cnt <- read_swat("object.cnt", output_dir = output_dir, skip = 1)
+  cnt <- read_swat("object.cnt")
   
   if (!is.null(cnt)) {
     checks <- list(
@@ -35,7 +43,7 @@ check_swatplus <- function(project, output_dir) {
     
     for (nm in names(checks)) {
       chk  <- checks[[nm]]
-      dat  <- read_swat(chk$file, output_dir = output_dir, skip = 1)
+      dat  <- read_swat(chk$file, skip = 1)
       if (is.null(dat)) next
       
       actual    <- nrow(dat)
@@ -131,10 +139,10 @@ check_swatplus <- function(project, output_dir) {
   cat("\n-- 5. Weather station names (weather-sta.cli vs weather-wgn.cli) --\n")
   
   sta <- read_swat("weather-sta.cli")
-  wgn <- read_swat("weather-wgn.cli")
+  wgn <- read_wgn_cli(output_dir = output_dir)
   
   if (!is.null(sta) && !is.null(wgn)) {
-    missing_wgn <- setdiff(sta[[1]], wgn[[1]])
+    missing_wgn <- setdiff(sta[[2]], wgn$summary$name)
     if (length(missing_wgn) > 0) {
       msg <- sprintf("  [MISMATCH] %d station names in weather-sta.cli missing from weather-wgn.cli",
                      length(missing_wgn))
@@ -209,4 +217,96 @@ check_swatplus <- function(project, output_dir) {
   }
   
   invisible(issues)
+}
+
+read_wgn_cli <- function(output_dir) {
+  
+  path <- file.path(output_dir, "weather-wgn.cli")
+  
+  if (!file.exists(path)) {
+    stop("weather-wgn.cli not found in: ", output_dir)
+  }
+  
+  lines <- readLines(path)
+  
+  # Skip the first title line
+  lines <- lines[-1]
+  
+  # Monthly variable names come from the header row of the first station
+  # Header rows start with whitespace + "tmp_max_ave..."
+  # Station rows contain the station name (no leading space) + coords + n_months
+  
+  # Identify line types
+  is_header  <- grepl("^\\s+tmp_max_ave", lines)
+  is_station <- !is_header & nchar(trimws(lines)) > 0
+  is_monthly <- !is_header & !is_station & nchar(trimws(lines)) > 0
+  
+  # Better approach: parse block by block
+  # Station line pattern: name, lat, lon, elev, n_months (no leading whitespace on name)
+  is_station_line <- grepl("^\\S+\\s+-?\\d+\\.\\d+\\s+-?\\d+\\.\\d+", lines)
+  is_header_line  <- grepl("^\\s+tmp_max_ave", lines)
+  is_data_line    <- !is_station_line & !is_header_line & nchar(trimws(lines)) > 0
+  
+  station_idx <- which(is_station_line)
+  n_stations  <- length(station_idx)
+  
+  # Parse monthly variable names from first header line
+  first_header <- lines[which(is_header_line)[1]]
+  mon_vars <- strsplit(trimws(first_header), "\\s+")[[1]]
+  
+  # Build results
+  stations <- vector("list", n_stations)
+  
+  for (i in seq_len(n_stations)) {
+    
+    # Parse station metadata line
+    sta_line <- trimws(lines[station_idx[i]])
+    sta_parts <- strsplit(sta_line, "\\s+")[[1]]
+    
+    name      <- sta_parts[1]
+    lat       <- as.numeric(sta_parts[2])
+    lon       <- as.numeric(sta_parts[3])
+    elev      <- as.numeric(sta_parts[4])
+    n_months  <- as.integer(sta_parts[5])
+    
+    # Data lines follow the header line after the station line
+    # Structure per station: station line, header line, 12 data lines
+    data_start <- station_idx[i] + 2  # skip station + header lines
+    data_end   <- data_start + n_months - 1
+    
+    monthly_lines <- lines[data_start:data_end]
+    
+    monthly_vals <- lapply(monthly_lines, function(l) {
+      as.numeric(strsplit(trimws(l), "\\s+")[[1]])
+    })
+    
+    monthly_df <- as.data.frame(do.call(rbind, monthly_vals))
+    names(monthly_df) <- mon_vars
+    monthly_df$month  <- seq_len(n_months)
+    monthly_df$name   <- name
+    
+    stations[[i]] <- list(
+      name     = name,
+      lat      = lat,
+      lon      = lon,
+      elev     = elev,
+      n_months = n_months,
+      monthly  = monthly_df
+    )
+  }
+  
+  # Also return a flat summary table (one row per station)
+  summary_tbl <- data.frame(
+    name     = sapply(stations, `[[`, "name"),
+    lat      = sapply(stations, `[[`, "lat"),
+    lon      = sapply(stations, `[[`, "lon"),
+    elev     = sapply(stations, `[[`, "elev"),
+    n_months = sapply(stations, `[[`, "n_months")
+  )
+  
+  list(
+    stations    = stations,
+    summary     = summary_tbl,
+    n_stations  = n_stations
+  )
 }
