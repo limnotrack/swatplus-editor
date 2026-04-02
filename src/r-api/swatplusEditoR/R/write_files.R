@@ -465,8 +465,11 @@ write_direct <- function(project, output_dir, swat_version = "60",
   
   # ---- INIT section ----
   message("  Writing initial condition files...")
+  if (has_data(con, "plant_ini")) {
+    write_plant_ini(con, output_dir, v, sv)
+  }
   write_table_section(con, output_dir, v, sv, has_cio, "init", list(
-    list(tbl = "plant_ini", file = "plant.ini"),
+    list(tbl = NULL, file = NULL),  # plant.ini written above
     list(tbl = "soil_plant_ini", file = "soil_plant.ini"),
     list(tbl = "om_water_ini", file = "om_water.ini", ignore_id = TRUE),
     list(tbl = "pest_hru_ini", file = "pest_hru.ini"),
@@ -823,8 +826,103 @@ write_constituents_cs <- function(con, output_dir, version = NULL,
   write_constit(salt, "salts")
 }
 
-#' Write management.sch file
-#'
+#' Write plant.ini in SWAT+ hierarchical format
+#' Each plant community block: name + plt_cnt + rot_yr_ini, then one sub-row
+#' per plant (indented).  Only writes communities referenced from
+#' landuse_lum.plnt_com_id (i.e. those actually used in the watershed).
+#' Mirrors Python Plant_ini.write() in fileio/init.py.
+#' @keywords internal
+write_plant_ini <- function(con, output_dir, version = NULL,
+                            swat_version = NULL,
+                            file_name = "plant.ini") {
+  if (!has_data(con, "plant_ini")) return(invisible(NULL))
+
+  # Only communities actually referenced from landuse_lum
+  used_sql <- paste0(
+    "SELECT pi.id, pi.name, pi.rot_yr_ini ",
+    "FROM plant_ini pi ",
+    "WHERE pi.id IN (SELECT DISTINCT plnt_com_id FROM landuse_lum WHERE plnt_com_id IS NOT NULL) ",
+    "ORDER BY pi.id")
+  comms <- tryCatch(query_db(con, used_sql), error = function(e) NULL)
+  if (is.null(comms) || nrow(comms) == 0L) return(invisible(NULL))
+
+  # Plant sub-rows: join plant_ini_item with plants_plt to get plant name
+  items_sql <- paste0(
+    "SELECT pii.plant_ini_id, p.name AS plt_name, ",
+    "pii.lc_status, pii.lai_init, pii.bm_init, pii.phu_init, ",
+    "pii.plnt_pop, pii.yrs_init, pii.rsd_init ",
+    "FROM plant_ini_item pii ",
+    "LEFT JOIN plants_plt p ON pii.plnt_name_id = p.id ",
+    "WHERE pii.plant_ini_id IN (",
+    paste(comms$id, collapse = ","), ") ",
+    "ORDER BY pii.plant_ini_id, pii.id")
+  items <- tryCatch(query_db(con, items_sql), error = function(e) data.frame())
+
+  fp <- file.path(output_dir, file_name)
+  f  <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(swat_meta_line(fp, version, swat_version), f)
+
+  # Header — community-level columns then plant-level columns
+  # Python: string_pad(left) + int_pad + int_pad + key_name_pad + code_pad + num_pad*6
+  name_pad <- SWAT_STR_PAD
+  writeLines(paste0(
+    swat_string_pad("pcom_name", pad = name_pad, align = "left"),
+    swat_int_pad("plt_cnt"),
+    swat_int_pad("rot_yr_ini"),
+    swat_string_pad("plt_name", pad = SWAT_KEY_PAD, align = "right"),
+    swat_string_pad("lc_status", pad = SWAT_CODE_PAD, align = "right"),
+    swat_num_pad("lai_init"),
+    swat_num_pad("bm_init"),
+    swat_num_pad("phu_init"),
+    swat_num_pad("plnt_pop"),
+    swat_num_pad("yrs_init"),
+    swat_num_pad("rsd_init")
+  ), f)
+  writeLines("", f)
+
+  blank_name <- swat_string_pad("", pad = name_pad, align = "left", null_text = "")
+  blank_int  <- swat_int_pad(0)
+  # Override blank_int to be empty (matching Python blank padding)
+  blank_int  <- formatC("", width = SWAT_INT_PAD + 2L, flag = "-")
+
+  for (i in seq_len(nrow(comms))) {
+    comm  <- comms[i, ]
+    c_items <- if (nrow(items) > 0 && "plant_ini_id" %in% names(items))
+      items[items$plant_ini_id == comm$id, , drop = FALSE]
+    else data.frame()
+    plt_cnt <- nrow(c_items)
+
+    # Community header row
+    writeLines(paste0(
+      swat_string_pad(comm$name, pad = name_pad, align = "left"),
+      swat_int_pad(plt_cnt),
+      swat_int_pad(comm$rot_yr_ini)
+    ), f)
+
+    # Plant sub-rows
+    for (j in seq_len(nrow(c_items))) {
+      item <- c_items[j, ]
+      writeLines(paste0(
+        blank_name,
+        blank_int,
+        swat_string_pad(item$plt_name, pad = SWAT_KEY_PAD, align = "right"),
+        swat_bool_pad(item$lc_status),
+        swat_num_pad(item$lai_init),
+        swat_num_pad(item$bm_init),
+        swat_num_pad(item$phu_init),
+        swat_num_pad(item$plnt_pop),
+        swat_num_pad(item$yrs_init),
+        swat_num_pad(item$rsd_init)
+      ), f)
+    }
+  }
+
+  invisible(NULL)
+}
+
+
 #' Writes the SWAT+ management schedule file, including auto-operations
 #' (decision-table-driven) and manual operations for each schedule.
 #' Mirrors Python Management_sch.write() in fileio/lum.py.

@@ -1024,9 +1024,15 @@ populate_from_gis <- function(con) {
           "SELECT id FROM plant_ini WHERE name = '", comm_name, "' LIMIT 1"))$id[1L],
         error = function(e) NA_integer_)
       if (is.na(pi_id)) {
+        # Get rot_yr_ini from datasets plant_ini if available
+        ds_rot <- tryCatch(
+          DBI::dbGetQuery(con, paste0(
+            "SELECT rot_yr_ini FROM plant_ini WHERE name = '", comm_name, "' LIMIT 1"))$rot_yr_ini[1L],
+          error = function(e) 1L)
+        rot_yr <- if (!is.na(ds_rot)) ds_rot else 1L
         .gis_exec(con, paste0(
           "INSERT OR IGNORE INTO plant_ini (id, name, rot_yr_ini) VALUES (",
-          next_pi_id, ", '", comm_name, "', 1)"))
+          next_pi_id, ", '", comm_name, "', ", rot_yr, ")"))
         pi_id_check <- tryCatch(
           DBI::dbGetQuery(con, paste0(
             "SELECT id FROM plant_ini WHERE name = '", comm_name, "' LIMIT 1"))$id[1L],
@@ -1034,6 +1040,23 @@ populate_from_gis <- function(con) {
         if (!is.na(pi_id_check)) {
           pi_id <- pi_id_check
           next_pi_id <- next_pi_id + 1L
+
+          # Populate plant_ini_item: add one default item using the plant itself
+          p_id <- plant_row$id[1L]
+          has_item <- tryCatch(
+            DBI::dbGetQuery(con, paste0(
+              "SELECT COUNT(*) AS n FROM plant_ini_item WHERE plant_ini_id = ", pi_id))$n[1L],
+            error = function(e) 0L)
+          if (is.na(has_item) || has_item == 0L) {
+            nxt_item_id <- tryCatch(
+              DBI::dbGetQuery(con, "SELECT COALESCE(MAX(id),0)+1 AS n FROM plant_ini_item")$n[1L],
+              error = function(e) 1L)
+            .gis_exec(con, paste0(
+              "INSERT OR IGNORE INTO plant_ini_item ",
+              "(id, plant_ini_id, plnt_name_id, lc_status, lai_init, bm_init, ",
+              "phu_init, plnt_pop, yrs_init, rsd_init) VALUES (",
+              nxt_item_id, ", ", pi_id, ", ", p_id, ", 0, 0.0, 0.0, 0.0, 0.0, 0.0, 10000.0)"))
+          }
         }
       }
 
