@@ -794,6 +794,9 @@ populate_from_gis <- function(con) {
   # Ensure landuse_lum has rows for each unique land use
   lum_dict <- .gis_ensure_landuse_lum(con, unique(hrus$landuse))
 
+  # Create management schedules for annual crop land uses (mirrors Python import_gis.py)
+  .gis_ensure_management_sch(con, unique(hrus$landuse))
+
   # Get snow_sno id (should already exist from populate_from_datasets)
   snow_id <- tryCatch(
     DBI::dbGetQuery(con, "SELECT id FROM snow_sno LIMIT 1")$id[1L],
@@ -977,6 +980,71 @@ populate_from_gis <- function(con) {
     next_id <- next_id + 1L
   }
   lum_map
+}
+
+# Helper: create management_sch auto-op schedules for annual crop land uses.
+# Mirrors Python import_gis.py logic: for each unique landuse that matches a
+# warm_annual or cold_annual plant in plants_plt, create a "{plant}_rot"
+# management schedule with an auto-op referencing the pl_hv_summer1 (warm) or
+# pl_hv_winter1 (cold) decision table.  Returns a name->id map of schedules.
+.gis_ensure_management_sch <- function(con, landuse_codes) {
+  # Skip if management_sch already has data
+  if (.gis_count(con, "management_sch") > 0L) {
+    existing <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id, name FROM management_sch"),
+      error = function(e) data.frame(id = integer(0), name = character(0)))
+    return(setNames(existing$id, existing$name))
+  }
+
+  # Look up plant types for the landuse codes
+  plants <- tryCatch(
+    DBI::dbGetQuery(con, paste0(
+      "SELECT name, plnt_typ FROM plants_plt WHERE name IN (",
+      paste0("'", unique(tolower(landuse_codes)), "'", collapse = ","), ")")),
+    error = function(e) data.frame(name = character(0), plnt_typ = character(0)))
+
+  if (nrow(plants) == 0L) return(invisible(setNames(integer(0), character(0))))
+
+  annual_plants <- plants[grepl("^(warm_annual|cold_annual)", plants$plnt_typ), , drop = FALSE]
+  if (nrow(annual_plants) == 0L) return(invisible(setNames(integer(0), character(0))))
+
+  # Get the decision table IDs for summer and winter schedules
+  summer_dt <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM d_table_dtl WHERE name = 'pl_hv_summer1' LIMIT 1")$id[1L],
+    error = function(e) NA_integer_)
+  winter_dt <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM d_table_dtl WHERE name = 'pl_hv_winter1' LIMIT 1")$id[1L],
+    error = function(e) NA_integer_)
+
+  if (is.na(summer_dt) && is.na(winter_dt)) {
+    return(invisible(setNames(integer(0), character(0))))
+  }
+
+  next_mgt_id <- .gis_count(con, "management_sch") + 1L
+  next_auto_id <- .gis_count(con, "management_sch_auto") + 1L
+  mgt_map <- setNames(integer(0), character(0))
+
+  for (i in seq_len(nrow(annual_plants))) {
+    plant_name <- annual_plants$name[i]
+    plnt_typ   <- annual_plants$plnt_typ[i]
+    mgt_name   <- paste0(plant_name, "_rot")
+
+    dt_id <- if (grepl("^warm_annual", plnt_typ)) summer_dt else winter_dt
+    if (is.na(dt_id)) next
+
+    .gis_exec(con, paste0(
+      "INSERT OR IGNORE INTO management_sch (id, name) VALUES (", next_mgt_id,
+      ", '", mgt_name, "')"))
+    .gis_exec(con, paste0(
+      "INSERT INTO management_sch_auto (id, management_sch_id, d_table_id, plant1) VALUES (",
+      next_auto_id, ", ", next_mgt_id, ", ", dt_id, ", '", plant_name, "')"))
+
+    mgt_map[mgt_name] <- next_mgt_id
+    next_mgt_id  <- next_mgt_id  + 1L
+    next_auto_id <- next_auto_id + 1L
+  }
+
+  mgt_map
 }
 
 # --------------------------------------------------------------------------

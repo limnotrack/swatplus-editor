@@ -413,9 +413,12 @@ write_direct <- function(project, output_dir, swat_version = "60",
   
   # ---- LUM section ----
   message("  Writing land use management files...")
+  if (has_data(con, "management_sch")) {
+    write_management_sch(con, output_dir, v, sv)
+  }
   write_table_section(con, output_dir, v, sv, has_cio, "lum", list(
     list(tbl = "landuse_lum", file = "landuse.lum"),
-    list(tbl = "management_sch", file = "management.sch"),
+    list(tbl = NULL, file = NULL),  # management.sch written above
     list(tbl = "cntable_lum", file = "cntable.lum"),
     list(tbl = "cons_prac_lum", file = "cons_prac.lum"),
     list(tbl = "ovn_table_lum", file = "ovn_table.lum")
@@ -792,6 +795,124 @@ write_constituents_cs <- function(con, output_dir, version = NULL,
   write_constit(path, "pathogens")
   write_constit(hmet, "metals")
   write_constit(salt, "salts")
+}
+
+#' Write management.sch file
+#'
+#' Writes the SWAT+ management schedule file, including auto-operations
+#' (decision-table-driven) and manual operations for each schedule.
+#' Mirrors Python Management_sch.write() in fileio/lum.py.
+#' @keywords internal
+write_management_sch <- function(con, output_dir, version = NULL,
+                                 swat_version = NULL,
+                                 file_name = "management.sch") {
+  if (!has_data(con, "management_sch")) return(invisible(NULL))
+
+  scheds <- tryCatch(
+    query_db(con, "SELECT id, name FROM management_sch ORDER BY id"),
+    error = function(e) NULL)
+  if (is.null(scheds) || nrow(scheds) == 0L) return(invisible(NULL))
+
+  auto_ops <- tryCatch(
+    query_db(con, paste0(
+      "SELECT a.management_sch_id, d.name as d_table, a.plant1, a.plant2 ",
+      "FROM management_sch_auto a ",
+      "LEFT JOIN d_table_dtl d ON a.d_table_id = d.id ",
+      "ORDER BY a.management_sch_id, a.id")),
+    error = function(e) data.frame())
+
+  reg_ops <- tryCatch(
+    query_db(con, paste0(
+      "SELECT management_sch_id, op_typ, mon, day, hu_sch, ",
+      "op_data1, op_data2, op_data3 ",
+      "FROM management_sch_op ",
+      "ORDER BY management_sch_id, id")),
+    error = function(e) data.frame())
+
+  fp <- file.path(output_dir, file_name)
+  f <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(swat_meta_line(fp, version, swat_version), f)
+
+  # Header line
+  name_pad <- 41L
+  writeLines(paste0(
+    swat_string_pad("name", align = "left", pad = name_pad),
+    swat_string_pad("numb_ops",  align = "right", pad = SWAT_INT_PAD),
+    swat_string_pad("numb_auto", align = "right", pad = 9L),
+    swat_string_pad("op_typ",    align = "right"),
+    swat_string_pad("mon",       align = "right"),
+    swat_string_pad("day",       align = "right"),
+    swat_string_pad("hu_sch",    align = "right"),
+    swat_string_pad("op_data1",  align = "right"),
+    swat_string_pad("op_data2",  align = "right"),
+    swat_string_pad("op_data3",  align = "right")
+  ), f)
+  writeLines("", f)
+
+  row_pad <- 46L  # padding before auto-op / reg-op entries
+
+  for (i in seq_len(nrow(scheds))) {
+    sch_id   <- scheds$id[i]
+    sch_name <- scheds$name[i]
+
+    aops <- if (nrow(auto_ops) > 0 && "management_sch_id" %in% names(auto_ops))
+      auto_ops[auto_ops$management_sch_id == sch_id, , drop = FALSE] else data.frame()
+    rops <- if (nrow(reg_ops) > 0 && "management_sch_id" %in% names(reg_ops))
+      reg_ops[reg_ops$management_sch_id == sch_id, , drop = FALSE] else data.frame()
+
+    n_ops  <- nrow(rops)
+    n_auto <- nrow(aops)
+
+    writeLines(paste0(
+      swat_string_pad(sch_name, align = "left", pad = 25L),
+      swat_int_pad(n_ops),
+      swat_string_pad(as.character(n_auto), align = "right", pad = 9L)
+    ), f)
+    writeLines("", f)
+
+    # Auto-op rows
+    special_tables <- c("pl_hv_summer1", "pl_hv_summer2", "pl_hv_winter1")
+    for (j in seq_len(nrow(aops))) {
+      aop <- aops[j, ]
+      line <- paste0(swat_string_pad(" ", pad = row_pad),
+                     swat_string_pad(aop$d_table, align = "left", pad = 16L))
+      if (!is.na(aop$d_table) && aop$d_table %in% special_tables) {
+        line <- paste0(line, swat_string_pad(
+          if (!is.na(aop$plant1) && aop$plant1 != "") aop$plant1 else "null",
+          align = "left", pad = 5L))
+        if (!is.na(aop$d_table) && aop$d_table == "pl_hv_summer2" &&
+            !is.na(aop$plant2) && aop$plant2 != "") {
+          line <- paste0(line, swat_string_pad(aop$plant2, align = "left", pad = 5L))
+        }
+      }
+      writeLines(line, f)
+    }
+
+    # Regular operation rows
+    for (j in seq_len(nrow(rops))) {
+      rop <- rops[j, ]
+      skip_val <- if (!is.na(rop$op_typ) && rop$op_typ == "skip") "skip" else ""
+      if (skip_val == "skip") {
+        writeLines(paste0(swat_string_pad(" ", pad = row_pad),
+                          swat_string_pad("skip", align = "left")), f)
+      } else {
+        writeLines(paste0(
+          swat_string_pad(" ",           pad = row_pad),
+          swat_string_pad(rop$op_typ,    align = "left"),
+          swat_int_pad(rop$mon),
+          swat_int_pad(rop$day),
+          swat_num_pad(rop$hu_sch),
+          swat_string_pad(rop$op_data1, align = "left"),
+          swat_string_pad(rop$op_data2, align = "left"),
+          swat_string_pad(rop$op_data3, align = "left")
+        ), f)
+      }
+    }
+  }
+
+  invisible(NULL)
 }
 
 #' Write weather station CLI file
