@@ -961,7 +961,12 @@ populate_from_gis <- function(con) {
   1L
 }
 
-# Helper: ensure landuse_lum has rows for each land use; return name->id map
+# Helper: ensure landuse_lum has rows for each land use; return name->id map.
+# For each new land use code, populates FK columns by looking up:
+#   - plants_plt for plant-based land uses (sets plnt_com_id via plant_ini)
+#   - urban_urb for urban land uses (sets urban_id)
+#   - default cn2_id (id=5), cons_prac_id (id=1), ov_mann_id (id=2) from datasets
+# Mirrors Python import_gis.py insert_landuse().
 .gis_ensure_landuse_lum <- function(con, landuse_codes) {
   existing <- tryCatch(
     DBI::dbGetQuery(con, "SELECT id, name FROM landuse_lum"),
@@ -971,11 +976,101 @@ populate_from_gis <- function(con) {
   missing_codes <- setdiff(tolower(landuse_codes), names(lum_map))
   if (length(missing_codes) == 0L) return(lum_map)
 
+  # Default FK ids (Python defaults: cn2=5, cons_prac=1, ov_mann=2)
+  default_cn2 <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM cntable_lum WHERE id = 5 LIMIT 1")$id[1L],
+    error = function(e) NA_integer_)
+  if (is.na(default_cn2)) default_cn2 <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM cntable_lum ORDER BY id LIMIT 1 OFFSET 4")$id[1L],
+    error = function(e) NA_integer_)
+
+  default_cons_prac <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM cons_prac_lum ORDER BY id LIMIT 1")$id[1L],
+    error = function(e) NA_integer_)
+
+  default_ov_mann <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM ovn_table_lum WHERE id = 2 LIMIT 1")$id[1L],
+    error = function(e) NA_integer_)
+  if (is.na(default_ov_mann)) default_ov_mann <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM ovn_table_lum ORDER BY id LIMIT 1 OFFSET 1")$id[1L],
+    error = function(e) NA_integer_)
+
+  # Urban cn2 and ov_mann (Python defaults: cn2=49, ov_mann=18)
+  urban_cn2 <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM cntable_lum WHERE id = 49 LIMIT 1")$id[1L],
+    error = function(e) NA_integer_)
+  if (is.na(urban_cn2)) urban_cn2 <- default_cn2
+
+  urban_ov_mann <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id FROM ovn_table_lum WHERE id = 18 LIMIT 1")$id[1L],
+    error = function(e) NA_integer_)
+  if (is.na(urban_ov_mann)) urban_ov_mann <- default_ov_mann
+
   next_id <- max(c(0L, existing$id), na.rm = TRUE) + 1L
+  next_pi_id <- .gis_count(con, "plant_ini") + 1L
+
   for (code in missing_codes) {
-    .gis_exec(con, paste0(
-      "INSERT OR IGNORE INTO landuse_lum (id, name) VALUES (", next_id, ",'",
-      code, "')"))
+    # Try plant type first
+    plant_row <- tryCatch(
+      DBI::dbGetQuery(con, paste0(
+        "SELECT id, name FROM plants_plt WHERE LOWER(name) = '", code, "' LIMIT 1")),
+      error = function(e) data.frame())
+
+    if (nrow(plant_row) > 0L) {
+      # Create or reuse a plant_ini entry named '{code}_comm'
+      comm_name <- paste0(code, "_comm")
+      pi_id <- tryCatch(
+        DBI::dbGetQuery(con, paste0(
+          "SELECT id FROM plant_ini WHERE name = '", comm_name, "' LIMIT 1"))$id[1L],
+        error = function(e) NA_integer_)
+      if (is.na(pi_id)) {
+        .gis_exec(con, paste0(
+          "INSERT OR IGNORE INTO plant_ini (id, name, rot_yr_ini) VALUES (",
+          next_pi_id, ", '", comm_name, "', 1)"))
+        pi_id_check <- tryCatch(
+          DBI::dbGetQuery(con, paste0(
+            "SELECT id FROM plant_ini WHERE name = '", comm_name, "' LIMIT 1"))$id[1L],
+          error = function(e) NA_integer_)
+        if (!is.na(pi_id_check)) {
+          pi_id <- pi_id_check
+          next_pi_id <- next_pi_id + 1L
+        }
+      }
+
+      cn2_val     <- if (!is.na(default_cn2)) default_cn2 else "NULL"
+      cons_val    <- if (!is.na(default_cons_prac)) default_cons_prac else "NULL"
+      ovmann_val  <- if (!is.na(default_ov_mann)) default_ov_mann else "NULL"
+      pi_val      <- if (!is.na(pi_id)) pi_id else "NULL"
+
+      .gis_exec(con, paste0(
+        "INSERT OR IGNORE INTO landuse_lum (id, name, plnt_com_id, cn2_id, cons_prac_id, ov_mann_id) VALUES (",
+        next_id, ", '", code, "', ", pi_val, ", ", cn2_val, ", ", cons_val, ", ", ovmann_val, ")"))
+
+    } else {
+      # Try urban type
+      urban_row <- tryCatch(
+        DBI::dbGetQuery(con, paste0(
+          "SELECT id FROM urban_urb WHERE LOWER(name) = '", code, "' LIMIT 1")),
+        error = function(e) data.frame())
+
+      if (nrow(urban_row) > 0L) {
+        u_id       <- urban_row$id[1L]
+        cn2_val    <- if (!is.na(urban_cn2)) urban_cn2 else "NULL"
+        cons_val   <- if (!is.na(default_cons_prac)) default_cons_prac else "NULL"
+        ovmann_val <- if (!is.na(urban_ov_mann)) urban_ov_mann else "NULL"
+
+        .gis_exec(con, paste0(
+          "INSERT OR IGNORE INTO landuse_lum ",
+          "(id, name, urban_id, urb_ro, cn2_id, cons_prac_id, ov_mann_id) VALUES (",
+          next_id, ", '", code, "', ", u_id, ", 'buildup_washoff', ",
+          cn2_val, ", ", cons_val, ", ", ovmann_val, ")"))
+      } else {
+        # Unknown type: insert minimal row
+        .gis_exec(con, paste0(
+          "INSERT OR IGNORE INTO landuse_lum (id, name) VALUES (", next_id, ", '", code, "')"))
+      }
+    }
+
     lum_map[[code]] <- next_id
     next_id <- next_id + 1L
   }

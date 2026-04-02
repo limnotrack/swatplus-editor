@@ -417,7 +417,33 @@ write_direct <- function(project, output_dir, swat_version = "60",
     write_management_sch(con, output_dir, v, sv)
   }
   write_table_section(con, output_dir, v, sv, has_cio, "lum", list(
-    list(tbl = "landuse_lum", file = "landuse.lum"),
+    list(tbl = "landuse_lum", file = "landuse.lum",
+         query = "SELECT l.name, l.cal_group,
+           COALESCE(pi.name, 'null') AS plnt_com,
+           COALESCE(m.name,  'null') AS mgt,
+           COALESCE(c.name,  'null') AS cn2,
+           COALESCE(cp.name, 'null') AS cons_prac,
+           COALESCE(u.name,  'null') AS urban,
+           COALESCE(l.urb_ro,'null') AS urb_ro,
+           COALESCE(o.name,  'null') AS ov_mann,
+           COALESCE(ti.name, 'null') AS tile,
+           COALESCE(se.name, 'null') AS sep,
+           COALESCE(fs.name, 'null') AS vfs,
+           COALESCE(gw.name, 'null') AS grww,
+           COALESCE(bm.name, 'null') AS bmp
+         FROM landuse_lum l
+         LEFT JOIN plant_ini       pi ON l.plnt_com_id  = pi.id
+         LEFT JOIN management_sch   m ON l.mgt_id        = m.id
+         LEFT JOIN cntable_lum      c ON l.cn2_id         = c.id
+         LEFT JOIN cons_prac_lum   cp ON l.cons_prac_id   = cp.id
+         LEFT JOIN urban_urb        u ON l.urban_id        = u.id
+         LEFT JOIN ovn_table_lum    o ON l.ov_mann_id      = o.id
+         LEFT JOIN tiledrain_str   ti ON l.tile_id          = ti.id
+         LEFT JOIN septic_str      se ON l.sep_id            = se.id
+         LEFT JOIN filterstrip_str fs ON l.vfs_id            = fs.id
+         LEFT JOIN grassedww_str   gw ON l.grww_id           = gw.id
+         LEFT JOIN bmpuser_str     bm ON l.bmp_id             = bm.id
+         ORDER BY l.id"),
     list(tbl = NULL, file = NULL),  # management.sch written above
     list(tbl = "cntable_lum", file = "cntable.lum"),
     list(tbl = "cons_prac_lum", file = "cons_prac.lum"),
