@@ -288,6 +288,72 @@ check_swatplus <- function(project, output_dir) {
     }
   }
   
+  # ── 10. Plant community checks ───────────────────────────────────────────
+  cat("\n-- 10. Plant community checks --\n")
+  
+  plt <- read_swat("plants.plt")
+  lum <- read_swat("landuse.lum")
+  
+  if (!is.null(hru_data) && !is.null(lum)) {
+    # Check lu_mgt pointers in hru-data.hru exist in landuse.lum
+    missing_lum <- setdiff(hru_data$lu_mgt, lum$name)
+    if (length(missing_lum) > 0) {
+      msg <- sprintf("  [ERROR] %d lu_mgt value(s) in hru-data.hru missing from landuse.lum: %s",
+                     length(missing_lum),
+                     paste(head(missing_lum, 5), collapse = ", "))
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      cat(sprintf("  [OK] All %d hru-data.hru lu_mgt names found in landuse.lum\n",
+                  length(unique(hru_data$lu_mgt))))
+    }
+  }
+  
+  if (!is.null(lum)) {
+    
+    # Detect whether plnt_com is integer IDs or names — IDs indicate a writer bug
+    plnt_col <- if ("plnt_com" %in% names(lum)) {
+      "plnt_com"
+    } else if ("plnt_com_id" %in% names(lum)) {
+      "plnt_com_id"
+    } else {
+      NULL
+    }
+    
+    if (is.null(plnt_col)) {
+      msg <- "  [WARN] Neither 'plnt_com' nor 'plnt_com_id' column found in landuse.lum"
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else if (plnt_col == "plnt_com_id" || is.numeric(lum[[plnt_col]])) {
+      msg <- sprintf(
+        "  [ERROR] landuse.lum column '%s' contains integer IDs instead of plant community names - writer must resolve IDs to names before writing",
+        plnt_col
+      )
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      cat("  [OK] landuse.lum plnt_com column contains names (not integer IDs)\n")
+    }
+  }
+  
+  if (!is.null(plt)) {
+    # Check for duplicate plant codes
+    dupes <- plt$name[duplicated(plt$name)]
+    if (length(dupes) > 0) {
+      msg <- sprintf("  [ERROR] %d duplicate plant codes in plants.plt: %s",
+                     length(dupes), paste(head(dupes, 5), collapse = ", "))
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      cat(sprintf("  [OK] plants.plt: %d unique plant codes, no duplicates\n", nrow(plt)))
+    }
+    
+    # Info only - show available urban/water codes
+    urban_water_codes <- plt$name[grepl("^ur|^wat", plt$name, ignore.case = TRUE)]
+    cat(sprintf("  [INFO] Available urban/water codes in plants.plt: %s\n",
+                paste(urban_water_codes, collapse = ", ")))
+  }
+  
   # ── Summary ───────────────────────────────────────────────────────────────
   cat("\n=== Summary ===\n")
   if (length(issues) == 0) {
