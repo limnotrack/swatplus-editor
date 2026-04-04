@@ -1,0 +1,649 @@
+---
+title: "Setting up a SWAT+ Simulation with swatplusEditoR"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Setting up a SWAT+ Simulation with swatplusEditoR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment  = "#>",
+  eval     = FALSE   # examples require real file paths; set eval = TRUE locally
+)
+```
+
+## Overview
+
+This vignette walks through a complete SWAT+ simulation workflow using the
+`swatplusEditoR` package.  It covers both ways to start a project — delineating
+a new watershed from a DEM, or loading one that was already delineated in
+QSWAT+ or ArcSWAT+.
+
+The workflow mirrors the steps in the SWAT+ Editor GUI and its Python API
+(`src/api/`), with one important distinction: **watershed delineation is not
+part of the SWAT+ Editor Python API**.  In a typical desktop workflow,
+delineation is handled by [QSWAT+](https://github.com/swat-model/QSWATPlus)
+(a QGIS plugin that calls TauDEM internally); the Python API only imports the
+*results* of that step.  `delineate_watershed()` brings this capability
+directly into R so that the QSWAT+ dependency can be avoided entirely.
+
+```
+   Path A: Delineate watershed        Path B: Use existing watershed
+   (delineate_watershed)              (use_existing_watershed)
+   DEM + outlet point(s)              QSWAT+ / ArcSWAT+ shapefiles
+              |                                     |
+              +-------------- gis_* tables ---------+
+                                    |
+                         create_project_db()        SQLite project database
+                         setup_project()            reference data + GIS import
+                                    |
+                         import_wgn()               Weather Generator data
+                         import_weather()           observed weather files
+                         match_weather_stations()   spatial station linkage
+                                    |
+                         write_swatplus_files()     all SWAT+ input text files
+                                    |
+                         (run SWAT+ executable)
+                                    |
+                         read_output()              simulation output -> SQLite
+```
+
+## Prerequisites
+
+```r
+install.packages(c("DBI", "RSQLite", "sf", "terra"))
+
+# Install from the repository
+install.packages(
+  "src/r-api/swatplusEditoR",
+  repos = NULL,
+  type  = "source"
+)
+```
+
+```{r load}
+library(swatplusEditoR)
+```
+
+---
+
+## Choosing a watershed definition method
+
+The package provides two approaches, mirroring the SWAT+ Editor GUI:
+
+| Option | Function | When to use |
+|---|---|---|
+| **Delineate watershed** | `delineate_watershed()` | You have a DEM and want the package to delineate the watershed automatically using TauDEM |
+| **Use existing watershed** | `use_existing_watershed()` | You already have QSWAT+ or ArcSWAT+ output shapefiles |
+
+Both functions produce the same result: the `gis_*` database tables are
+populated and `project_config.delineation_done` is set to `TRUE`, so the rest
+of the workflow is identical regardless of which path you take.
+
+---
+
+## Option A — Delineate watershed with TauDEM
+
+`delineate_watershed()` uses the [TauDEM](https://hydrology.usu.edu/taudem/taudem5/) hydrological analysis library via the [`traudem`](https://github.com/lucarraro/traudem) R package.  TauDEM is the same engine used by [QSWAT+](https://github.com/swat-model/QSWATPlus) (a QGIS plugin) for watershed delineation; this function provides the equivalent capability from within R, without requiring QGIS or QSWAT+ to be installed.
+
+### Install TauDEM and traudem
+
+```r
+# Install the R wrapper package
+install.packages("traudem")
+
+# Follow the TauDEM installation guide for your OS:
+vignette("taudem-installation", package = "traudem")
+
+# Verify everything is working
+traudem::taudem_sitrep()
+```
+
+### Delineate from a DEM and outlet point
+
+```{r delineate}
+library(swatplusEditoR)
+library(sf)
+
+# Path to a projected GeoTIFF DEM
+# (Geographic/lat-lon DEMs are automatically reprojected to UTM)
+dem_file <- "/path/to/dem.tif"
+
+# Outlet point – can be an sf object, data.frame(lon, lat), or shapefile path
+outlet <- data.frame(lon = 174.76, lat = -36.85)   # WGS84 lon/lat
+
+# Create the project database first
+create_project_db("/path/to/project.sqlite")
+
+# Delineate and write directly to the project database
+gis_data <- delineate_watershed(
+  dem               = dem_file,
+  outlet            = outlet,
+  project_db        = "/path/to/project.sqlite",  # optional: write to DB
+  stream_threshold  = 1000,  # upstream cells to form a stream (subbasin boundary)
+  channel_threshold = 200,   # optional: finer channel network within subbasins
+  snap_distance     = 50,    # max cells to move outlet to nearest stream
+  n_processes       = 1L,    # increase if MPI is available
+  verbose           = TRUE
+)
+```
+
+The function runs this TauDEM pipeline, matching the
+[QSWATPlus](https://github.com/swat-model/QSWATPlus) `delineation.py`
+workflow step-by-step.  The numbered progress counter reports 9 steps (11 in
+dual-threshold mode); the list below includes all pipeline stages:
+
+1. **Pit Remove** — fill sinks in the DEM
+2. **D8 Flow Directions** — steepest-descent flow routing
+3. **D8 Contributing Area** (full DEM)
+4. **Grid Network** (`gridnet`) — path lengths (`plen`, `tlen`) and grid order (`gord`)
+5. **Stream Threshold** — define stream source raster at `stream_threshold`
+6. **Channel Threshold** *(optional, counted when `channel_threshold` is set)* — finer network at `channel_threshold`
+7. **Move Outlets to Streams** — snap outlet to nearest channel cell
+8. **D8 Contributing Area** (outlet-bounded)
+9. **Grid Network** (outlet-bounded re-run, not a separate counted step)
+10. **Stream Threshold** (outlet-bounded area)
+11. **Channel Threshold** (outlet-bounded) *(optional)*
+12. **StreamNet** — watershed raster + stream network shapefile
+13. **StreamNet** (channel network) *(optional, when `channel_threshold` is set)*
+14. Polygonise watershed raster → subbasin polygons (as `createWatershedShapefile()` in QSWATPlus)
+
+The `stream_threshold` controls the **subbasin** boundaries; setting
+`channel_threshold` to a smaller value adds a more detailed **channel** network
+inside each subbasin — exactly how QSWATPlus uses its `numCellsSt` (stream)
+and `numCellsCh` (channel) threshold parameters.
+
+The returned `gis_data` list contains data.frames for all `gis_*` tables.
+Simple HRUs (one per landscape unit, placeholder land-use `"AGRL"` and soil
+`"DEFAULT"`) are created automatically.  Refine these later by importing
+land-use and soil rasters via the SWAT+ Editor.
+
+### Inspect intermediate TauDEM files
+
+```{r delineate-inspect}
+# Keep all TauDEM intermediate rasters and shapefiles for inspection
+gis_data <- delineate_watershed(
+  dem           = dem_file,
+  outlet        = outlet,
+  work_dir      = "/path/to/taudem_workspace",
+  keep_work_dir = TRUE,      # don't delete intermediates
+  verbose       = TRUE
+)
+# workspace now contains (traudem-derived names for some, explicit for others):
+#   DEM.tif, DEMfel.tif                         <- pit remove
+#   DEMp.tif, DEMsd8.tif                        <- d8flowdir (traudem names)
+#   DEMad8.tif                                  <- aread8 (traudem names)
+#   gord.tif, plen.tif, tlen.tif                <- gridnet
+#   src_stream.tif, src_channel.tif             <- threshold (full DEM)
+#   outlet.shp, DEMad8movedoutlet.shp           <- moveoutletstostreams
+#   src_stream_final.tif, src_channel_final.tif <- threshold (outlet-bounded)
+#   ord_stream.tif, tree_stream.dat, coord_stream.dat,
+#   net_stream.shp, wstream.tif                 <- streamnet (streams)
+#   net_channel.shp, wchannel.tif               <- streamnet (channels, if dual)
+#   watershed.shp                               <- polygonised subbasins
+```
+
+---
+
+## Option B — Use existing watershed (QSWAT+ / ArcSWAT+ output)
+
+If you have already run QSWAT+ or ArcSWAT+ and have their output shapefiles,
+use `use_existing_watershed()` to read and register them.
+
+```{r use-existing}
+# Directory produced by QSWAT+ (contains subs1.shp, rivs1.shp, etc.)
+gis_dir <- "/path/to/qswatplus_output"
+
+# Read shapefiles and write to the project database
+gis_data <- use_existing_watershed(
+  gis_dir     = gis_dir,
+  project_db  = "/path/to/project.sqlite",   # optional: write to DB
+  dem_file    = "/path/to/dem.tif",           # optional: for elevation stats
+  gis_type    = "qgis",                       # "qgis" or "arcgis"
+  gis_version = "3.40.3-Bratislava",          # recorded in project_config
+  verbose     = TRUE
+)
+```
+
+Standard QSWAT+ shapefile names recognised automatically:
+
+| File | Contents |
+|---|---|
+| `subs1.shp` | Subbasins |
+| `rivs1.shp` | Channels / rivers |
+| `lsus2.shp` | Landscape units |
+| `hrus1.shp` | HRUs |
+| `reservoirs.shp` | Water bodies (optional) |
+| `outlets.shp` | Point sources / inlets (optional) |
+| `aquifers.shp` | Shallow aquifers (optional) |
+| `deepaquifers.shp` | Deep aquifers (optional) |
+| `dem.tif` | DEM raster for elevation stats (optional) |
+
+---
+
+## 1  Define file paths
+
+Adjust these paths to match your local project layout.
+
+```{r paths}
+# Directory produced by QSWAT+ or ArcSWAT+ containing the delineation outputs
+gis_dir      <- "/path/to/qswatplus_output"
+
+# The SWAT+ datasets reference database (ships with the SWAT+ Editor installer)
+datasets_db  <- "/path/to/swatplus_datasets.sqlite"
+
+# Where the project database and input files will be written
+project_dir  <- "/path/to/my_swat_project"
+
+project_db   <- file.path(project_dir, "my_project.sqlite")
+txtinout_dir <- file.path(project_dir, "Scenarios", "Default", "TxtInOut")
+output_db    <- file.path(project_dir, "my_project_output.sqlite")
+
+# WGN (Weather Generator) database — also ships with the SWAT+ Editor installer
+wgn_db       <- "/path/to/swatplus_wgn.sqlite"
+
+# Directory holding observed weather files (*.pcp, *.tmp, *.slr, *.hmd, *.wnd)
+weather_dir  <- "/path/to/observed_weather"
+
+# SWAT+ executable (replace with the actual version you have installed)
+swat_exe     <- "/path/to/swatplus_exe"
+```
+
+---
+
+## 2  Read GIS shapefiles and raster
+
+`read_swatplus_gis()` scans a QSWAT+ (or ArcSWAT+) output directory for the
+standard shapefile names it produces:
+
+| Shapefile | Contents |
+|---|---|
+| `subs1.shp` | Subbasins |
+| `rivs1.shp` | Channels / rivers |
+| `lsus2.shp` | Landscape units (LSUs) |
+| `hrus1.shp` | HRUs |
+| `reservoirs.shp` | Reservoirs / ponds *(optional)* |
+| `outlets.shp` | Point sources / inlets *(optional)* |
+| `aquifers.shp` | Shallow aquifers *(optional)* |
+| `deepaquifers.shp` | Deep aquifers *(optional)* |
+
+A DEM raster is used to extract elevation statistics for each polygon when
+elevation columns are absent from the shapefile attributes.
+
+```{r read-gis}
+# Read all shapefiles and the DEM raster from the QSWAT+ output directory
+gis_data <- read_swatplus_gis(
+  gis_dir  = gis_dir,
+  dem_file = file.path(gis_dir, "dem.tif")   # optional but recommended
+)
+
+# gis_data is a named list; inspect what was found
+names(gis_data)
+#> [1] "subbasins"      "channels"       "lsus"           "hrus"
+#> [4] "water"          "points"         "aquifers"       "deep_aquifers"
+
+# Preview the subbasins table
+head(gis_data$subbasins)
+```
+
+You can also read individual shapefiles:
+
+```{r read-individual}
+subbasins <- read_subbasins_shp(file.path(gis_dir, "subs1.shp"),
+                                 dem = read_dem_raster(file.path(gis_dir, "dem.tif")))
+channels  <- read_channels_shp(file.path(gis_dir, "rivs1.shp"))
+lsus      <- read_lsus_shp(file.path(gis_dir, "lsus2.shp"))
+hrus      <- read_hrus_shp(file.path(gis_dir, "hrus1.shp"))
+```
+
+---
+
+## 3  Create the project database and write GIS tables
+
+```{r create-db}
+# Create the empty project database (schema only)
+dir.create(project_dir, recursive = TRUE, showWarnings = FALSE)
+create_project_db(project_db)
+
+# Open a connection and write all GIS tables
+con <- swat_open_db(project_db)
+
+write_gis_to_db(
+  con           = con,
+  subbasins     = gis_data$subbasins,
+  channels      = gis_data$channels,
+  lsus          = gis_data$lsus,
+  hrus          = gis_data$hrus,
+  water         = gis_data$water,          # NULL if not present
+  points        = gis_data$points,         # NULL if not present
+  aquifers      = gis_data$aquifers,       # NULL if not present
+  deep_aquifers = gis_data$deep_aquifers   # NULL if not present
+)
+
+# Quick check
+swat_count(con, "gis_hrus")
+#> [1] 142
+
+swat_close_db(con)
+```
+
+---
+
+## 4  Set up the project
+
+`setup_project()` copies reference data (plants, soils, decision tables, land
+use tables, print settings, etc.) from the SWAT+ datasets database into the
+project database, and then runs the GIS import step that converts the raw GIS
+tables into the full SWAT+ model object tables (routing units, channels, HRUs,
+aquifers, connections, etc.).
+
+```{r proj-setup}
+setup_project(
+  project_db      = project_db,
+  datasets_db     = datasets_db,
+  editor_version  = "2.3.0",
+  project_name    = "My First R SWAT+ Project",
+  is_lte          = FALSE,      # TRUE for LTE (Landscape Threshold Erosion)
+  run_gis_import  = TRUE,       # convert GIS tables → SWAT+ model objects
+  verbose         = TRUE
+)
+```
+
+After this step, tables such as `hru_data_hru`, `hru_con`, `rout_unit_rtu`,
+`chandeg_con`, `aquifer_aqu`, and the connection tables are all populated.
+
+### Inspect what was created
+
+```{r inspect}
+con <- swat_open_db(project_db)
+
+cat("HRUs:          ", swat_count(con, "hru_data_hru"),   "\n")
+cat("Routing units: ", swat_count(con, "rout_unit_rtu"),  "\n")
+cat("Channels:      ", swat_count(con, "channel_lte_cha"),"\n")
+cat("Aquifers:      ", swat_count(con, "aquifer_aqu"),    "\n")
+
+swat_close_db(con)
+```
+
+---
+
+## 5  Import weather data
+
+### 5a  Weather Generator (WGN)
+
+WGN data provides synthetic weather statistics when no observed data is
+available. The SWAT+ Editor ships a WGN database for the US; other regional
+databases can be used by specifying `wgn_table`.
+
+```{r wgn}
+import_wgn(
+  project_db = project_db,
+  wgn_db     = wgn_db,
+  wgn_table  = "weather_wgn_cli"
+)
+```
+
+### 5b  Observed weather files
+
+Point to a directory containing SWAT+ weather files
+(`*.pcp`, `*.tmp`, `*.slr`, `*.hmd`, `*.wnd`, `*.pet`).
+
+```{r observed-weather}
+import_weather(
+  project_db  = project_db,
+  weather_dir = weather_dir,
+  format      = "observed"   # or "2012" for SWAT 2012 format
+)
+
+# Match each weather station to the nearest spatial object (HRU, channel, etc.)
+match_weather_stations(project_db)
+```
+
+### 5c  Atmospheric deposition (optional)
+
+```{r atmo}
+import_atmo_dep(
+  project_db = project_db,
+  csv_path   = "/path/to/atmo_dep.csv",   # columns: year, nh4_wet, no3_wet, nh4_dry, no3_dry
+  filename   = "atmo.cli"
+)
+```
+
+---
+
+## 6  Configure the simulation period
+
+The simulation time can be adjusted directly in the database or through the
+SWAT+ Editor GUI. To do it programmatically:
+
+```{r time}
+con <- swat_open_db(project_db)
+
+DBI::dbExecute(con,
+  "UPDATE time_sim SET
+     yrc_start = 2000,
+     day_start = 0,
+     yrc_end   = 2020,
+     day_end   = 0,
+     step      = 0")
+
+swat_close_db(con)
+```
+
+---
+
+## 7  Write SWAT+ input files
+
+`write_swatplus_files()` reads every relevant table from the project database
+and writes the corresponding SWAT+ plain-text input files to
+`txtinout_dir`.
+
+```{r write}
+write_swatplus_files(
+  project_db = project_db,
+  output_dir = txtinout_dir,
+  verbose    = TRUE
+)
+```
+
+This creates files including `time.sim`, `print.prt`, `object.cnt`,
+`codes.bsn`, `parameters.bsn`, `weather-sta.cli`, `weather-wgn.cli`,
+`hru.con`, `rout_unit.con`, `chandeg.con`, `aquifer.con`, `reservoir.con`,
+`hru-data.hru`, `chandeg.cha`, `aquifer.aqu`, `soils.sol`, `landuse.lum`,
+`management.sch`, `lum.dtl`, and more.
+
+---
+
+## 8  Run the SWAT+ model
+
+The SWAT+ executable must be run from within the `TxtInOut` directory.
+
+```{r run-model}
+# Using base R system2()
+system2(swat_exe, stdout = TRUE, stderr = TRUE,
+        wd = txtinout_dir)
+```
+
+Or use the `run_all()` wrapper which handles this step automatically
+(see Section 9).
+
+---
+
+## 9  Read simulation output
+
+After the model completes, output CSV files are written to `txtinout_dir`.
+`read_output()` discovers them via `files_out.out` and imports each one as a
+table in the output SQLite database.
+
+```{r read-output}
+counts <- read_output(
+  project_db = project_db,
+  output_db  = output_db,
+  txt_dir    = txtinout_dir
+)
+
+# How many rows were imported from each output file?
+print(counts)
+
+# Query results
+out_con <- swat_open_db(output_db)
+swat_get_table_names(out_con)          # list all imported tables
+head(swat_read_table(out_con, "hru_wb_aa"))  # annual average water balance
+swat_close_db(out_con)
+```
+
+---
+
+## 10  One-shot workflow with `run_all()`
+
+All of the above steps can be run in a single call.  Individual stages can be
+toggled on or off.
+
+```{r run-all}
+run_all(
+  project_db      = project_db,
+  datasets_db     = datasets_db,
+  swat_exe        = swat_exe,
+  output_dir      = txtinout_dir,
+  output_db       = output_db,
+  editor_version  = "2.3.0",
+  project_name    = "My First R SWAT+ Project",
+
+  # GIS was already imported in step 4 – skip setup + GIS re-import
+  run_setup       = FALSE,
+  run_gis_import  = FALSE,
+
+  # Weather
+  wgn_db          = wgn_db,
+  weather_dir     = weather_dir,
+
+  # Simulation period
+  yrc_start       = 2000L,
+  day_start       = 0L,
+  yrc_end         = 2020L,
+  day_end         = 0L,
+
+  run_write_files = TRUE,
+  run_model       = TRUE,
+  run_read_output = TRUE
+)
+```
+
+For a brand-new project (GIS tables already written to the database),
+you can run the **complete** workflow:
+
+```{r run-all-full}
+# Full workflow from scratch
+run_all(
+  project_db     = project_db,
+  datasets_db    = datasets_db,
+  swat_exe       = swat_exe,
+  output_dir     = txtinout_dir,
+  output_db      = output_db,
+  wgn_db         = wgn_db,
+  weather_dir    = weather_dir,
+  yrc_start      = 2000L,
+  yrc_end        = 2020L
+)
+```
+
+---
+
+## 11  Typical project directory layout
+
+After completing the workflow, a typical project will look like this:
+
+```
+my_swat_project/
+├── my_project.sqlite          # project database (all tables)
+├── my_project_output.sqlite   # simulation output tables
+└── Scenarios/
+    └── Default/
+        └── TxtInOut/
+            ├── time.sim
+            ├── print.prt
+            ├── object.cnt
+            ├── codes.bsn
+            ├── parameters.bsn
+            ├── weather-sta.cli
+            ├── weather-wgn.cli
+            ├── hru.con
+            ├── rout_unit.con
+            ├── chandeg.con
+            ├── hru-data.hru
+            ├── chandeg.cha
+            ├── aquifer.aqu
+            ├── soils.sol
+            ├── landuse.lum
+            ├── management.sch
+            ├── lum.dtl
+            ├── ...
+            └── (SWAT+ output: hru_wb_aa.csv, cha_wb_aa.csv, ...)
+```
+
+---
+
+## 12  Reading individual shapefiles manually
+
+If you need to supply a custom attribute mapping, read shapefiles individually
+with the lower-level functions:
+
+```{r manual-read}
+# Read subbasins and override column name lookups
+subs <- read_subbasins_shp(
+  path      = file.path(gis_dir, "subs1.shp"),
+  dem       = read_dem_raster(file.path(gis_dir, "dem.tif")),
+  area_col  = "Area_ha",   # column name in your shapefile
+  slope_col = "MeanSlope"
+)
+
+# Inspect result
+str(subs)
+```
+
+---
+
+## 13  Working with the project database directly
+
+All project data is stored in a standard SQLite database, so you can query
+and modify it with any tool that supports SQLite.
+
+```{r direct-db}
+library(DBI)
+
+con <- swat_open_db(project_db)
+
+# List all tables
+swat_get_table_names(con)
+
+# Read the project configuration
+swat_read_table(con, "project_config")
+
+# Check the current simulation period
+swat_query(con, "SELECT * FROM time_sim")
+
+# Update a basin parameter
+swat_execute_sql(con,
+  "UPDATE parameters_bsn SET esco = 0.8, epco = 0.8")
+
+swat_close_db(con)
+```
+
+---
+
+## See also
+
+- `?delineate_watershed` — delineate a watershed from a DEM using TauDEM
+- `?use_existing_watershed` — load QSWAT+/ArcSWAT+ shapefiles into a project
+- `?run_all` — complete workflow in one function
+- `?setup_project` — project initialisation and GIS import
+- `?read_swatplus_gis` — read an entire QSWAT+ output directory
+- `?write_swatplus_files` — write all SWAT+ input text files
+- `?read_output` — import simulation output to SQLite
+- [TauDEM documentation](https://hydrology.usu.edu/taudem/taudem5/)
+- [traudem package](https://github.com/lucarraro/traudem)
+- [SWAT+ documentation](https://swatplus.gitbook.io/docs)
+- [SWAT+ Editor GitHub](https://github.com/limnotrack/swatplus-editor)

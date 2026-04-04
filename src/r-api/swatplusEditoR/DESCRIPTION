@@ -1,0 +1,47 @@
+Package: swatplusEditoR
+Type: Package
+Title: R Interface for SWAT+ Hydrological Model
+Version: 1.0.0
+Date: 2025-01-01
+Authors@R: c(
+    person("SWAT+ Editor", "Contributors", role = c("aut", "cre"),
+           email = "swatplus@example.com")
+  )
+Description: An R package that replicates the functionality of the SWAT+
+    Editor Python API (src/api) and adds watershed delineation capabilities.
+    Provides tools to delineate watersheds from a DEM using TauDEM (via the
+    'traudem' package) — equivalent to what QSWAT+ (<https://github.com/swat-model/QSWATPlus>)
+    does in a desktop workflow, but without requiring QGIS or QSWAT+. Also
+    provides tools to read shapefiles and raster data, write to the dedicated
+    SWAT+ SQLite project database, import GIS data, import weather data, write
+    SWAT+ input files, run the SWAT+ model, and read simulation output. This
+    package serves as an R-native alternative to the Python-based SWAT+ Editor
+    backend combined with QSWAT+ for the full end-to-end workflow.
+License: GPL-3
+URL: https://github.com/limnotrack/swatplus-editor
+BugReports: https://github.com/limnotrack/swatplus-editor/issues
+Encoding: UTF-8
+LazyData: false
+Depends:
+    R (>= 4.1.0)
+Imports:
+    DBI (>= 1.1.0),
+    RSQLite (>= 2.3.0),
+    sf (>= 1.0.0),
+    terra (>= 1.6.0),
+    dplyr (>= 1.1.0),
+    stringr (>= 1.5.0),
+    jsonlite (>= 1.8.0),
+    tools,
+    utils,
+    stats
+Suggests:
+    testthat (>= 3.0.0),
+    withr (>= 2.5.0),
+    knitr (>= 1.40),
+    rmarkdown (>= 2.20),
+    traudem (>= 0.0.3),
+    processx (>= 3.5.0)
+VignetteBuilder: knitr
+RoxygenNote: 7.3.3
+Config/testthat/edition: 3
