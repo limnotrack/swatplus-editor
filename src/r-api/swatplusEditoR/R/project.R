@@ -287,6 +287,18 @@ populate_from_datasets <- function(con) {
   invisible(NULL)
 }
 
+# Like .gis_write but silently drops data-frame columns that do not exist in
+# the target DB table.  This allows callers to pass a "full-defaults" frame
+# while remaining compatible with minimal test schemas.
+.gis_write_safe <- function(con, tbl, df) {
+  if (nrow(df) == 0L) return(invisible(NULL))
+  db_cols <- tryCatch(DBI::dbListFields(con, tbl),
+                      error = function(e) names(df))
+  common  <- intersect(names(df), db_cols)
+  if (length(common) == 0L) return(invisible(NULL))
+  .gis_write(con, tbl, df[, common, drop = FALSE])
+}
+
 # --------------------------------------------------------------------------
 # Internal helper: safe single SQL execute
 # --------------------------------------------------------------------------
@@ -515,28 +527,43 @@ populate_from_gis <- function(con) {
     DBI::dbGetQuery(con, "SELECT id FROM nutrients_cha LIMIT 1")$id[1L],
     error = function(e) 1L)
 
-  # One default sediment_cha row
-  if (.gis_count(con, "sediment_cha") == 0L) {
-    .gis_exec(con, "INSERT INTO sediment_cha (id, name) VALUES (1, 'sedcha1')")
-  }
-  sed_id <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id FROM sediment_cha LIMIT 1")$id[1L],
-    error = function(e) 1L)
-
   n   <- nrow(chas)
   cnt <- max(chas$id)
   idx <- seq_len(n)
 
-  # Standard hydrology_cha: per-channel geometry-based parameters
+  # Standard hydrology_cha: per-channel geometry-based parameters.
+  # Extra columns (beyond wd/dp/slp/len/mann/k) use .gis_write_safe() so they
+  # are silently dropped when the DB schema does not have them (e.g. in tests).
   hyds <- data.frame(
-    id       = idx,
-    name     = mapply(.gis_name, "hyd", chas$id, cnt),
-    wd       = pmax(chas$wid2, 0.1),
-    dp       = pmax(chas$dep2, 0.1),
-    slp      = pmax(chas$slo2 / 100, 0.0001),
-    len      = pmax(chas$len2 / 1000, 0.001),
-    mann     = 0.05,
-    k        = 1.0,
+    id        = idx,
+    name      = mapply(.gis_name, "hyd", chas$id, cnt),
+    wd        = pmax(chas$wid2, 0.1),
+    dp        = pmax(chas$dep2, 0.1),
+    slp       = pmax(chas$slo2 / 100, 0.0001),
+    len       = pmax(chas$len2 / 1000, 0.001),
+    mann      = 0.05,
+    k         = 1.0,
+    erod_fact = 0.02,
+    cov_fact  = 0.0,
+    hc_cov    = 0.0,
+    eq_slp    = 0.0,
+    d50       = 0.1,
+    clay      = 0.1,
+    carbon    = 0.01,
+    dry_bd    = 1.2,
+    side_slp  = 2.0,
+    bed_load  = 0.5,
+    fps       = 0.0,
+    fpn       = 0.0,
+    n_conc    = 0.0,
+    p_conc    = 0.0,
+    p_bio     = 0.0,
+    stringsAsFactors = FALSE)
+
+  # One sediment_cha row per channel (not a single shared row).
+  seds <- data.frame(
+    id   = idx,
+    name = mapply(.gis_name, "sed", chas$id, cnt),
     stringsAsFactors = FALSE)
 
   # Standard channel_cha: references hydrology, sediment, nutrients, initial
@@ -545,7 +572,7 @@ populate_from_gis <- function(con) {
     name    = mapply(.gis_name, "cha", chas$id, cnt),
     init_id = init_id,
     hyd_id  = idx,
-    sed_id  = sed_id,
+    sed_id  = idx,
     nut_id  = nut_id,
     stringsAsFactors = FALSE)
 
@@ -561,7 +588,8 @@ populate_from_gis <- function(con) {
     rule   = 0L,
     stringsAsFactors = FALSE)
 
-  .gis_write(con, "hydrology_cha",  hyds)
+  .gis_write_safe(con, "hydrology_cha",  hyds)
+  .gis_write_safe(con, "sediment_cha",   seds)
   .gis_write(con, "channel_cha",    chan_chas)
   .gis_write(con, "chandeg_con",    chan_cons)
   invisible(NULL)

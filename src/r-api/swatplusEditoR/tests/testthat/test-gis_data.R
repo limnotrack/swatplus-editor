@@ -161,9 +161,10 @@ test_that(".gis_insert_channels populates channel_cha and hydrology_cha", {
   expect_equal(hyd$dp[1], 1.5)
   expect_true(hyd$mann[1] == 0.05)
 
-  # sediment_cha should have 1 default row
+  # sediment_cha should have one row per channel
   sed <- DBI::dbGetQuery(con, "SELECT * FROM sediment_cha")
   expect_equal(nrow(sed), 1)
+  expect_true(grepl("^sed", sed$name[1]))
 
   # nutrients_cha should have 1 default row
   nut <- DBI::dbGetQuery(con, "SELECT * FROM nutrients_cha")
