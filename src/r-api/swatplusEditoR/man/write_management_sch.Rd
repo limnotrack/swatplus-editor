@@ -2,7 +2,9 @@
 % Please edit documentation in R/write_files.R
 \name{write_management_sch}
 \alias{write_management_sch}
-\title{Write management.sch file}
+\title{Writes the SWAT+ management schedule file, including auto-operations
+(decision-table-driven) and manual operations for each schedule.
+Mirrors Python Management_sch.write() in fileio/lum.py.}
 \usage{
 write_management_sch(
   con,
