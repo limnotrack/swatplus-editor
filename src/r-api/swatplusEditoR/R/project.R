@@ -815,18 +815,6 @@ populate_from_gis <- function(con) {
   cnt <- max(hrus$id)
   idx <- seq_len(n)
 
-  # topography_hyd rows for HRUs (ids continue after routing unit topos)
-  topo_base <- .gis_count(con, "topography_hyd")
-  topos <- data.frame(
-    id       = topo_base + idx,
-    name     = sprintf("topohru%04d", idx),
-    slp      = pmax(hrus$slope / 100, 0.001),
-    slp_len  = sapply(hrus$slope, .slope_len),
-    lat_len  = sapply(hrus$slope, .slope_len),
-    dist_cha = 121.0,
-    depos    = 0.0,
-    stringsAsFactors = FALSE)
-
   hyds <- data.frame(
     id          = idx,
     name        = mapply(.gis_name, "hyd", hrus$id, cnt),
@@ -870,7 +858,7 @@ populate_from_gis <- function(con) {
   hru_objs <- data.frame(
     id                = idx,
     name              = mapply(.gis_name, "hru", hrus$id, cnt),
-    topo_id           = topo_base + idx,
+    topo_id           = rtu_id_for_hru,
     hydro_id          = idx,
     soil_id           = soils_id,
     lu_mgt_id         = lu_ids,
@@ -915,7 +903,6 @@ populate_from_gis <- function(con) {
     name = mapply(.gis_name, "hru", hrus$id, cnt),
     stringsAsFactors = FALSE)
 
-  .gis_write(con, "topography_hyd", topos)
   .gis_write(con, "hydrology_hyd",  hyds)
   .gis_write(con, "hru_data_hru",   hru_objs)
   .gis_write(con, "hru_con",        hru_cons)

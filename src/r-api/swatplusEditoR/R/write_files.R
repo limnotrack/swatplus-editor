@@ -254,7 +254,12 @@ write_direct <- function(project, output_dir, swat_version = "60",
   }
   write_table_section(con, output_dir, v, sv, has_cio, "routing_unit", list(
     list(tbl = NULL, file = NULL),  # rout_unit.def written above
-    list(tbl = "rout_unit_ele", file = "rout_unit.ele"),
+    list(tbl = "rout_unit_ele", file = "rout_unit.ele",
+         query = "SELECT e.id, e.name, e.obj_typ, e.obj_id, e.frac,
+           COALESCE(d.name, '0') as dlr
+         FROM rout_unit_ele e
+         LEFT JOIN delratio_del d ON e.dlr_id = d.id
+         ORDER BY e.id"),
     list(tbl = "rout_unit_rtu", file = "rout_unit.rtu",
          query = "SELECT r.id, r.name, r.name as define,
            'null' as dlr,
