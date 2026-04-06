@@ -249,8 +249,11 @@ write_direct <- function(project, output_dir, swat_version = "60",
   
   # ---- ROUTING UNIT section ----
   message("  Writing routing unit files...")
+  if (has_data(con, "rout_unit_con")) {
+    write_rout_unit_def(con, output_dir, v, sv)
+  }
   write_table_section(con, output_dir, v, sv, has_cio, "routing_unit", list(
-    list(tbl = "rout_unit_ele", file = "rout_unit.def"),
+    list(tbl = NULL, file = NULL),  # rout_unit.def written above
     list(tbl = "rout_unit_ele", file = "rout_unit.ele"),
     list(tbl = "rout_unit_rtu", file = "rout_unit.rtu",
          query = "SELECT r.id, r.name, r.name as define,
@@ -357,7 +360,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
   message("  Writing hydrology files...")
   write_table_section(con, output_dir, v, sv, has_cio, "hydrology", list(
     list(tbl = "hydrology_hyd", file = "hydrology.hyd"),
-    list(tbl = "topography_hyd", file = "topography.hyd"),
+    list(tbl = "topography_hyd", file = "topography.hyd", ignore_id = TRUE),
     list(tbl = "field_fld", file = "field.fld", ignore_id = TRUE)
   ))
   
@@ -825,6 +828,90 @@ write_constituents_cs <- function(con, output_dir, version = NULL,
   write_constit(hmet, "metals")
   write_constit(salt, "salts")
 }
+
+#' Write rout_unit.def in SWAT+ format
+#' Each routing unit block: id / name / elem_tot / element IDs.
+#' Iterates over rout_unit_con (one row per RTU) and for each RTU writes
+#' the sequential IDs of all associated rout_unit_ele rows using range
+#' notation (negative = "through").
+#' Mirrors Python Rout_unit_def.write() in fileio/routing_unit.py.
+#' @keywords internal
+write_rout_unit_def <- function(con, output_dir, version = NULL,
+                                swat_version = NULL,
+                                file_name = "rout_unit.def") {
+  rtus <- tryCatch(
+    query_db(con, "SELECT id, name FROM rout_unit_con ORDER BY id"),
+    error = function(e) NULL)
+  if (is.null(rtus) || nrow(rtus) == 0L) return(invisible(NULL))
+
+  # All rout_unit_ele rows ordered by id — used to derive sequential position
+  eles <- tryCatch(
+    query_db(con, "SELECT id, rtu_id, obj_id FROM rout_unit_ele ORDER BY id"),
+    error = function(e) NULL)
+  if (is.null(eles) || nrow(eles) == 0L) return(invisible(NULL))
+
+  # Build ordered list of obj_ids (used by Python write_ele_ids2 to find position)
+  all_obj_ids <- eles$obj_id
+
+  fp <- file.path(output_dir, file_name)
+  f  <- file(fp, "w")
+  on.exit(close(f))
+
+  writeLines(swat_meta_line(fp, version, swat_version), f)
+
+  writeLines(paste0(
+    swat_int_pad("id"),
+    swat_string_pad("name"),
+    swat_int_pad("elem_tot"),
+    swat_int_pad("elements")
+  ), f)
+  writeLines("", f)
+
+  for (i in seq_len(nrow(rtus))) {
+    rtu <- rtus[i, ]
+    rtu_eles <- eles[eles$rtu_id == rtu$id, , drop = FALSE]
+
+    # Convert obj_ids to their sequential position in all_obj_ids
+    seq_ids <- match(rtu_eles$obj_id, all_obj_ids)
+    seq_ids <- seq_ids[!is.na(seq_ids)]
+
+    # Build range notation: positive = start, negative = end-of-range
+    ele_parts <- character(0)
+    if (length(seq_ids) > 0L) {
+      last_id        <- 0L
+      last_appended  <- 0L
+      just_wrote     <- FALSE
+      for (sid in seq_ids) {
+        if (last_id == 0L) {
+          ele_parts  <- c(ele_parts, swat_int_pad(sid))
+          just_wrote <- TRUE
+          last_appended <- sid
+        } else if (sid > last_id + 1L) {
+          if (last_appended != last_id)
+            ele_parts <- c(ele_parts, swat_int_pad(-last_id))
+          ele_parts   <- c(ele_parts, swat_int_pad(sid))
+          last_appended <- sid
+          just_wrote  <- TRUE
+        } else {
+          just_wrote  <- FALSE
+        }
+        last_id <- sid
+      }
+      if (!just_wrote && length(seq_ids) > 0L)
+        ele_parts <- c(ele_parts, swat_int_pad(-last_id))
+    }
+
+    writeLines(paste0(
+      swat_int_pad(i),
+      swat_string_pad(rtu$name),
+      swat_int_pad(length(ele_parts)),
+      paste(ele_parts, collapse = "")
+    ), f)
+  }
+
+  invisible(NULL)
+}
+
 
 #' Write plant.ini in SWAT+ hierarchical format
 #' Each plant community block: name + plt_cnt + rot_yr_ini, then one sub-row
