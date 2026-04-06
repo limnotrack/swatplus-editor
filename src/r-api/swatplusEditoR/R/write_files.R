@@ -865,7 +865,6 @@ write_rout_unit_def <- function(con, output_dir, version = NULL,
     swat_int_pad("elem_tot"),
     swat_int_pad("elements")
   ), f)
-  writeLines("", f)
 
   for (i in seq_len(nrow(rtus))) {
     rtu <- rtus[i, ]
