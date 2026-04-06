@@ -306,6 +306,15 @@ populate_from_datasets <- function(con) {
 }
 
 # --------------------------------------------------------------------------
+# SWAT+ × 10 naming: id multiplied by 10, minimum 4-digit zero-padding.
+# Used for routing-unit level objects (rtu, toportu, fld) to leave room
+# for inserting intermediate IDs between units (standard QSWAT+ convention).
+# --------------------------------------------------------------------------
+.gis_name_x10 <- function(id, prefix) {
+  sprintf("%s%04d", prefix, id * 10L)
+}
+
+# --------------------------------------------------------------------------
 # Internal helper: slope pct -> slope length (Python get_slope_len())
 # --------------------------------------------------------------------------
 .slope_len <- function(slope_pct) {
@@ -406,7 +415,7 @@ populate_from_gis <- function(con) {
 
   topos <- data.frame(
     id       = idx,
-    name     = mapply(.gis_name, "toportu", lsus$id, cnt),
+    name     = sapply(idx, .gis_name_x10, prefix = "toportu"),
     slp      = pmax(lsus$slope / 100, 0.001),
     slp_len  = sapply(lsus$slope, .slope_len),
     lat_len  = sapply(lsus$slope, .slope_len),
@@ -416,7 +425,7 @@ populate_from_gis <- function(con) {
 
   fields <- data.frame(
     id   = idx,
-    name = mapply(.gis_name, "fld", lsus$id, cnt),
+    name = sapply(idx, .gis_name_x10, prefix = "fld"),
     len  = 500.0,
     wd   = 100.0,
     ang  = 30.0,
@@ -424,14 +433,14 @@ populate_from_gis <- function(con) {
 
   rtus <- data.frame(
     id       = idx,
-    name     = mapply(.gis_name, "rtu", lsus$id, cnt),
+    name     = sapply(idx, .gis_name_x10, prefix = "rtu"),
     topo_id  = idx,
     field_id = idx,
     stringsAsFactors = FALSE)
 
   rtu_cons <- data.frame(
     id     = idx,
-    name   = mapply(.gis_name, "rtu", lsus$id, cnt),
+    name   = sapply(idx, .gis_name_x10, prefix = "rtu"),
     gis_id = lsus$id,
     lat    = lsus$lat,
     lon    = lsus$lon,
@@ -444,7 +453,7 @@ populate_from_gis <- function(con) {
   # rout_unit_def_con mirrors rout_unit_con (acts as a "definition" flag table)
   rtu_def_cons <- data.frame(
     id     = idx,
-    name   = mapply(.gis_name, "rtu", lsus$id, cnt),
+    name   = sapply(idx, .gis_name_x10, prefix = "rtu"),
     rtu_id = idx,
     stringsAsFactors = FALSE)
 
@@ -810,7 +819,7 @@ populate_from_gis <- function(con) {
   topo_base <- .gis_count(con, "topography_hyd")
   topos <- data.frame(
     id       = topo_base + idx,
-    name     = mapply(.gis_name, "topohru", hrus$id, cnt),
+    name     = sprintf("topohru%04d", idx),
     slp      = pmax(hrus$slope / 100, 0.001),
     slp_len  = sapply(hrus$slope, .slope_len),
     lat_len  = sapply(hrus$slope, .slope_len),
