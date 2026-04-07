@@ -7,9 +7,10 @@ setup_swat_sim <- function() {
 
   dem         <- system.file("extdata", "ravn_dem.tif",     package = "rQSWATPlus")
   landuse     <- system.file("extdata", "ravn_landuse.tif", package = "rQSWATPlus")
-  soil        <- system.file("extdata", "ravn_soil.tif",    package = "rQSWATPlus")
   lu_lookup   <- system.file("extdata", "ravn_landuse.csv", package = "rQSWATPlus")
+  soil        <- system.file("extdata", "ravn_soil.tif",    package = "rQSWATPlus")
   soil_lookup <- system.file("extdata", "ravn_soil.csv",    package = "rQSWATPlus")
+  usersoil <- system.file("extdata", "ravn_usersoil.csv", package = "rQSWATPlus")
   outlet      <- system.file("extdata", "ravn_outlet.shp",  package = "rQSWATPlus")
   era5_dir <- system.file("extdata", "era5", package = "swatplusEditoR")
   wgn_db <- system.file("extdata", "swatplus_wgn_nz.sqlite", package = "swatplusEditoR")
@@ -32,9 +33,10 @@ setup_swat_sim <- function() {
     project_dir      = file.path(tempdir(), "ravn_sim"),
     dem_file         = dem,
     landuse_file     = landuse,
-    soil_file        = soil,
     landuse_lookup   = lu_lookup,
+    soil_file        = soil,
     soil_lookup      = soil_lookup,
+    usersoil         = usersoil, 
     outlet_file      = outlet,
     threshold        = 500,
     slope_breaks     = c(0, 5, 15, 9999),
