@@ -519,9 +519,52 @@ populate_from_gis <- function(con) {
     DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
     error = function(e) 1L)
 
-  # One default nutrients_cha row
+  # One default nutrients_cha row with physics-based defaults (mirrors Python model).
+  # .gis_write_safe() silently drops columns absent from the DB schema (e.g. tests).
   if (.gis_count(con, "nutrients_cha") == 0L) {
-    .gis_exec(con, "INSERT INTO nutrients_cha (id, name) VALUES (1, 'nutcha1')")
+    nuts_def <- data.frame(
+      id          = 1L,
+      name        = "nutcha1",
+      plt_n       = 0,
+      ptl_p       = 0,
+      alg_stl     = 1,
+      ben_disp    = 0.05,
+      ben_nh3n    = 0.5,
+      ptln_stl    = 0.05,
+      ptlp_stl    = 0.05,
+      cst_stl     = 2.5,
+      ben_cst     = 2.5,
+      cbn_bod_co  = 1.71,
+      air_rt      = 50,
+      cbn_bod_stl = 0.36,
+      ben_bod     = 2,
+      bact_die    = 2,
+      cst_decay   = 1.71,
+      nh3n_no2n   = 0.55,
+      no2n_no3n   = 1.1,
+      ptln_nh3n   = 0.21,
+      ptlp_solp   = 0.35,
+      q2e_lt      = 2L,
+      q2e_alg     = 2L,
+      chla_alg    = 50,
+      alg_n       = 0.08,
+      alg_p       = 0.015,
+      alg_o2_prod = 1.6,
+      alg_o2_resp = 2,
+      o2_nh3n     = 3.5,
+      o2_no2n     = 1.07,
+      alg_grow    = 2,
+      alg_resp    = 2.5,
+      slr_act     = 0.3,
+      lt_co       = 0.75,
+      const_n     = 0.02,
+      const_p     = 0.025,
+      lt_nonalg   = 1,
+      alg_shd_l   = 0.03,
+      alg_shd_nl  = 0.054,
+      nh3_pref    = 0.5,
+      stringsAsFactors = FALSE)
+    .gis_write_safe(con, "nutrients_cha", nuts_def)
   }
   nut_id <- tryCatch(
     DBI::dbGetQuery(con, "SELECT id FROM nutrients_cha LIMIT 1")$id[1L],

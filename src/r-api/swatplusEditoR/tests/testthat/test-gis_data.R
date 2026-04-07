@@ -55,7 +55,9 @@ create_channel_test_project <- function() {
   DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS sediment_cha (
     id INTEGER PRIMARY KEY, name TEXT UNIQUE)")
   DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS nutrients_cha (
-    id INTEGER PRIMARY KEY, name TEXT UNIQUE)")
+    id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+    alg_stl REAL, ben_disp REAL, ben_nh3n REAL, cbn_bod_co REAL,
+    alg_grow REAL, nh3_pref REAL)")
   DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS initial_cha (
     id INTEGER PRIMARY KEY, name TEXT, org_min_id INTEGER)")
   DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS om_water_ini (
@@ -166,9 +168,15 @@ test_that(".gis_insert_channels populates channel_cha and hydrology_cha", {
   expect_equal(nrow(sed), 1)
   expect_true(grepl("^sed", sed$name[1]))
 
-  # nutrients_cha should have 1 default row
+  # nutrients_cha should have 1 default row with physics-based defaults
   nut <- DBI::dbGetQuery(con, "SELECT * FROM nutrients_cha")
   expect_equal(nrow(nut), 1)
+  expect_equal(nut$alg_stl[1],    1.0)
+  expect_equal(nut$ben_disp[1],   0.05)
+  expect_equal(nut$ben_nh3n[1],   0.5)
+  expect_equal(nut$cbn_bod_co[1], 1.71)
+  expect_equal(nut$alg_grow[1],   2.0)
+  expect_equal(nut$nh3_pref[1],   0.5)
 
   # chandeg_con should have 1 row
   chandeg <- DBI::dbGetQuery(con, "SELECT * FROM chandeg_con")
