@@ -1077,16 +1077,31 @@ populate_from_gis <- function(con) {
       error = function(e) data.frame(id = integer(0), area = numeric(0)))
     arlsu_for_hru <- lsu_area_map$area[match(hrus$lsu, lsu_area_map$id)]
     arlsu_for_hru[is.na(arlsu_for_hru) | arlsu_for_hru <= 0] <- 1.0
-
+    
+    # frac should be arslp / sum(arslp) within each rtu_id
+    # i.e. each HRU's fraction of its routing unit's total slope area
+    
+    rtu_arslp_totals <- tapply(hrus$arslp, rtu_id_for_hru, sum)
+    rtu_arslp_for_hru <- rtu_arslp_totals[as.character(rtu_id_for_hru)]
+    
     rtu_eles <- data.frame(
       id      = idx,
       name    = mapply(.gis_name, "hru", hrus$id, cnt),
       rtu_id  = rtu_id_for_hru,
       obj_typ = "hru",
       obj_id  = idx,
-      frac    = pmin(1.0, hrus$arslp / arlsu_for_hru),
+      frac    = hrus$arslp / rtu_arslp_for_hru,  # fraction within RTU
       dlr_id  = NA_integer_,
       stringsAsFactors = FALSE)
+    # rtu_eles <- data.frame(
+    #   id      = idx,
+    #   name    = mapply(.gis_name, "hru", hrus$id, cnt),
+    #   rtu_id  = rtu_id_for_hru,
+    #   obj_typ = "hru",
+    #   obj_id  = idx,
+    #   frac    = pmin(1.0, hrus$arslp / arlsu_for_hru),
+    #   dlr_id  = NA_integer_,
+    #   stringsAsFactors = FALSE)
     .gis_write_safe(con, "rout_unit_ele", rtu_eles)
   }
 
