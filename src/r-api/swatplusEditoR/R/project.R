@@ -582,7 +582,7 @@ populate_from_gis <- function(con) {
     name      = mapply(.gis_name, "hyd", chas$id, cnt),
     wd        = pmax(chas$wid2, 0.1),
     dp        = pmax(chas$dep2, 0.1),
-    slp       = pmax(chas$slo2 / 100, 0.0001),
+    slp       = pmax(chas$slo2, 0.0001),
     len       = pmax(chas$len2, 0.001),
     mann      = 0.05,
     k         = 1.0,

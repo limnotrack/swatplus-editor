@@ -8,22 +8,6 @@
 
 check_swatplus <- function(project, output_dir) {
   
-  # Helper to read a SWAT+ text file (skip title + header)
-  read_swat <- function(file, out_dir = output_dir, skip = 1, ...) {
-    path <- file.path(out_dir, file)
-    if (!file.exists(path)) {
-      message("  [MISSING] ", file)
-      return(NULL)
-    }
-    tryCatch(
-      read.table(path, skip = skip, header = TRUE, fill = TRUE, ...),
-      error = function(e) {
-        message("  [READ ERROR] ", file, ": ", e$message)
-        NULL
-      }
-    )
-  }
-  
   issues <- list()
   
   cat("=== SWAT+ Connectivity Check ===\n\n")
