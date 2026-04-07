@@ -365,7 +365,10 @@ write_direct <- function(project, output_dir, swat_version = "60",
   message("  Writing hydrology files...")
   write_table_section(con, output_dir, v, sv, has_cio, "hydrology", list(
     list(tbl = "hydrology_hyd", file = "hydrology.hyd"),
-    list(tbl = "topography_hyd", file = "topography.hyd", ignore_id = TRUE),
+    list(tbl = "topography_hyd", file = "topography.hyd", ignore_id = TRUE,
+         query = paste0(
+           "SELECT id, name, slp, slp_len, lat_len, dist_cha, depos ",
+           "FROM topography_hyd ORDER BY id")),
     list(tbl = "field_fld", file = "field.fld", ignore_id = TRUE)
   ))
   

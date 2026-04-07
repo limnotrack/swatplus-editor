@@ -512,6 +512,179 @@ check_swatplus <- function(project, output_dir) {
     }
   }
   
+  # ── 15. HRU hydrology_hyd consistency ──────────────────────────────────────
+  cat("\n-- 15. HRU hydrology consistency (hru-data.hru vs hydrology.hyd) --\n")
+  
+  hyd_file <- read_swat("hydrology.hyd", output_dir)
+  
+  if (!is.null(hru_data) && !is.null(hyd_file)) {
+    # hru-data.hru has a hydro column that references hydrology.hyd names
+    hydro_col <- if ("hydro" %in% names(hru_data)) "hydro" else
+      if ("hydro_id" %in% names(hru_data)) "hydro_id" else NULL
+    
+    if (!is.null(hydro_col)) {
+      n_hrus <- nrow(hru_data)
+      n_hyds <- nrow(hyd_file)
+      if (n_hyds < n_hrus) {
+        msg <- sprintf(
+          "  [WARN] Only %d hydrology.hyd entries but %d HRUs - some HRUs lack hydrology",
+          n_hyds, n_hrus)
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] %d hydrology.hyd entries cover %d HRUs\n", n_hyds, n_hrus))
+      }
+    } else {
+      cat("  [SKIP] Could not find hydro/hydro_id column in hru-data.hru\n")
+    }
+  }
+  
+  # ── 16. HRU topography consistency ──────────────────────────────────────
+  cat("\n-- 16. HRU topography consistency (hru-data.hru vs topography.hyd) --\n")
+  
+  topo_file <- read_swat("topography.hyd", output_dir)
+  
+  if (!is.null(hru_data) && !is.null(topo_file)) {
+    # Each HRU should have a topo entry
+    topo_col <- if ("topo" %in% names(hru_data)) "topo" else
+      if ("topo_id" %in% names(hru_data)) "topo_id" else NULL
+    
+    if (!is.null(topo_col)) {
+      # Check that referenced topo names exist
+      if (is.character(hru_data[[topo_col]])) {
+        missing_topo <- setdiff(hru_data[[topo_col]], topo_file$name)
+        if (length(missing_topo) > 0) {
+          msg <- sprintf(
+            "  [ERROR] %d topo references in hru-data.hru missing from topography.hyd",
+            length(missing_topo))
+          cat(msg, "\n")
+          cat("  First 5:", paste(head(missing_topo, 5), collapse = ", "), "\n")
+          issues[[length(issues) + 1]] <- msg
+        } else {
+          cat(sprintf("  [OK] All %d HRU topo references found in topography.hyd\n",
+                      nrow(hru_data)))
+        }
+      } else {
+        # ID-based reference: count check
+        n_hru_topos <- sum(grepl("hru", topo_file$name, ignore.case = TRUE))
+        n_rtu_topos <- nrow(topo_file) - n_hru_topos
+        cat(sprintf("  [INFO] topography.hyd: %d total entries (%d RTU-level, %d HRU-level)\n",
+                    nrow(topo_file), n_rtu_topos, n_hru_topos))
+        if (n_hru_topos < nrow(hru_data)) {
+          msg <- sprintf(
+            "  [WARN] Only %d HRU topography entries but %d HRUs",
+            n_hru_topos, nrow(hru_data))
+          cat(msg, "\n")
+          issues[[length(issues) + 1]] <- msg
+        }
+      }
+    } else {
+      cat("  [SKIP] Could not find topo/topo_id column in hru-data.hru\n")
+    }
+  }
+  
+  # ── 17. ls_unit_ele completeness ──────────────────────────────────────────
+  cat("\n-- 17. Landscape unit element completeness (ls_unit.ele) --\n")
+  
+  ls_ele_file <- read_swat("ls_unit.ele", output_dir)
+  
+  if (!is.null(ls_ele_file) && !is.null(hru_data)) {
+    n_ls_eles <- nrow(ls_ele_file)
+    n_hrus_expected <- nrow(hru_data)
+    
+    if (n_ls_eles != n_hrus_expected) {
+      msg <- sprintf(
+        "  [WARN] ls_unit.ele has %d entries but expected %d (one per HRU)",
+        n_ls_eles, n_hrus_expected)
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      cat(sprintf("  [OK] ls_unit.ele has %d entries matching %d HRUs\n",
+                  n_ls_eles, n_hrus_expected))
+    }
+    
+    # Check bsn_frac sums to ~1.0
+    if ("bsn_frac" %in% names(ls_ele_file)) {
+      bsn_sum <- sum(ls_ele_file$bsn_frac, na.rm = TRUE)
+      if (abs(bsn_sum - 1.0) > 0.01) {
+        msg <- sprintf(
+          "  [WARN] ls_unit.ele bsn_frac sums to %.4f (expected ~1.0)", bsn_sum)
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] ls_unit.ele bsn_frac sums to %.4f\n", bsn_sum))
+      }
+    }
+  }
+  
+  # ── 18. HRU routing: hru_con columns ────────────────────────────────────
+  cat("\n-- 18. HRU routing: hru.con structure --\n")
+  
+  if (!is.null(hru_con)) {
+    # Check that hru_con has the hru_id / hru column (FK to hru_data_hru)
+    has_hru_fk <- any(c("hru", "hru_id") %in% names(hru_con))
+    if (!has_hru_fk) {
+      msg <- "  [WARN] hru.con missing 'hru' / 'hru_id' column - HRU foreign key not set"
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      cat("  [OK] hru.con has HRU foreign key column\n")
+    }
+    
+    # Check that hru_con has wst column (weather station assignment)
+    has_wst <- any(c("wst", "wst_id") %in% names(hru_con))
+    if (!has_wst) {
+      msg <- "  [WARN] hru.con missing 'wst' / 'wst_id' column - weather station not assigned"
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      # Check if any wst values are actually set (non-NA, non-null)
+      wst_col <- if ("wst" %in% names(hru_con)) "wst" else "wst_id"
+      n_wst_set <- sum(!is.na(hru_con[[wst_col]]) & hru_con[[wst_col]] != "null", na.rm = TRUE)
+      if (n_wst_set == 0) {
+        cat(sprintf("  [INFO] hru.con: wst column present but no weather stations assigned (%d HRUs)\n",
+                    nrow(hru_con)))
+      } else {
+        cat(sprintf("  [OK] hru.con: %d of %d HRUs have weather stations assigned\n",
+                    n_wst_set, nrow(hru_con)))
+      }
+    }
+    
+    # Check area > 0
+    if ("area" %in% names(hru_con)) {
+      zero_area <- sum(hru_con$area <= 0 | is.na(hru_con$area))
+      if (zero_area > 0) {
+        msg <- sprintf("  [WARN] %d HRU(s) in hru.con have zero or missing area", zero_area)
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] All %d HRUs have positive area\n", nrow(hru_con)))
+      }
+    }
+  }
+  
+  # ── 19. HRU routing: rout_unit_ele references valid RTUs ────────────────
+  cat("\n-- 19. HRU routing: rout_unit.ele RTU references --\n")
+  
+  if (!is.null(rtu_ele) && !is.null(rtu_con)) {
+    hru_eles <- rtu_ele[rtu_ele$obj_typ == "hru", , drop = FALSE]
+    
+    if (nrow(hru_eles) > 0) {
+      # rtu_ele doesn't have rtu_id in the file output, but we can check
+      # that each HRU name appears and fraction is valid
+      bad_frac <- sum(is.na(hru_eles$frac) | hru_eles$frac <= 0 | hru_eles$frac > 1.0001)
+      if (bad_frac > 0) {
+        msg <- sprintf("  [WARN] %d HRU element(s) in rout_unit.ele have invalid fraction",
+                       bad_frac)
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] All %d HRU elements have valid fractions (0, 1]\n",
+                    nrow(hru_eles)))
+      }
+    }
+  }
+  
   # ── Summary ───────────────────────────────────────────────────────────────
   cat("\n=== Summary ===\n")
   if (length(issues) == 0) {

@@ -916,7 +916,13 @@ populate_from_gis <- function(con) {
 #   ls_unit_ele:    (id,name)  [minimal]
 # --------------------------------------------------------------------------
 .gis_insert_hrus <- function(con) {
-  if (.gis_count(con, "hru_data_hru") > 0L) return(invisible(NULL))
+  # When hru_data_hru is already populated (e.g. by rQSWATPlus), we still need
+
+  # to create the related tables (hydrology_hyd, hru_con, rout_unit_ele,
+  # ls_unit_ele, topography_hyd for HRUs) that depend on it.  Only skip
+  # individual tables that are already populated.
+  hru_data_exists <- .gis_count(con, "hru_data_hru") > 0L
+
   hrus <- tryCatch(
     DBI::dbGetQuery(con, "SELECT * FROM gis_hrus ORDER BY id"),
     error = function(e) NULL)
@@ -946,32 +952,24 @@ populate_from_gis <- function(con) {
   cnt <- max(hrus$id)
   idx <- seq_len(n)
 
-  hyds <- data.frame(
-    id          = idx,
-    name        = mapply(.gis_name, "hyd", hrus$id, cnt),
-    lat_ttime   = 0.0,
-    lat_sed     = 0.0,
-    can_max     = 1.0,
-    esco        = 0.95,
-    epco        = 0.50,
-    orgn_enrich = 0.0,
-    orgp_enrich = 0.0,
-    cn3_swf     = 0.95,
-    bio_mix     = 0.20,
-    perco       = 0.50,
-    lat_orgn    = 0.0,
-    lat_orgp    = 0.0,
-    harg_pet    = 0.0,
-    latq_co     = 0.0,
-    cn2         = 0.0,
-    stringsAsFactors = FALSE)
-
   # Soil ids (from soils_sol by name)
   soils_map <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id, name FROM soils_sol"),
-    error = function(e) data.frame(id = integer(0), name = character(0)))
+    DBI::dbGetQuery(con, "SELECT id, name, hyd_grp FROM soils_sol"),
+    error = function(e) data.frame(id = integer(0), name = character(0),
+                                   hyd_grp = character(0)))
   soils_id <- soils_map$id[match(hrus$soil, soils_map$name)]
   soils_id[is.na(soils_id)] <- if (nrow(soils_map) > 0L) soils_map$id[1L] else 1L
+
+  # Get hyd_grp per HRU for hydrology parameter computation
+  hyd_grp_for_hru <- if ("hyd_grp" %in% names(soils_map)) {
+    soils_map$hyd_grp[match(hrus$soil, soils_map$name)]
+  } else {
+    rep(NA_character_, n)
+  }
+
+  # Compute perco, cn3_swf, latq_co from soil hydrological group and slope
+  # Mirrors Python Hydrology_hyd.get_perco_cn3_swf_latq_co()
+  hyd_params <- .get_perco_cn3_swf_latq_co(hyd_grp_for_hru, hrus$slope / 100)
 
   # Landuse lum ids
   lu_ids <- unname(lum_dict[tolower(hrus$landuse)])
@@ -986,60 +984,184 @@ populate_from_gis <- function(con) {
   # field_id matches the field created for each routing unit (same id)
   field_id_for_hru <- rtu_id_for_hru
 
-  hru_objs <- data.frame(
-    id                = idx,
-    name              = mapply(.gis_name, "hru", hrus$id, cnt),
-    topo_id           = rtu_id_for_hru,
-    hydro_id          = idx,
-    soil_id           = soils_id,
-    lu_mgt_id         = lu_ids,
-    soil_plant_ini_id = sp_id,
-    surf_stor         = NA_character_,
-    snow_id           = if (!is.na(snow_id)) snow_id else NA_integer_,
-    field_id          = field_id_for_hru,
-    stringsAsFactors  = FALSE)
+  # Topography_hyd: one row per HRU (Python inserts these starting after RTU topos)
+  # topo_id starts after the existing topography_hyd entries (RTU level)
+  existing_topo_count <- .gis_count(con, "topography_hyd")
+  topo_start_id <- existing_topo_count + 1L
+  topo_ids_for_hru <- seq(topo_start_id, length.out = n)
 
-  hru_cons <- data.frame(
-    id     = idx,
-    name   = mapply(.gis_name, "hru", hrus$id, cnt),
-    gis_id = hrus$id,
-    lat    = hrus$lat,
-    lon    = hrus$lon,
-    elev   = hrus$elev,
-    area   = hrus$arslp,
-    ovfl   = 0L,
-    rule   = 0L,
-    stringsAsFactors = FALSE)
+  # hydrology_hyd: one row per HRU (mirrors Python)
+  if (.gis_count(con, "hydrology_hyd") == 0L) {
+    hyds <- data.frame(
+      id          = idx,
+      name        = mapply(.gis_name, "hyd", hrus$id, cnt),
+      lat_ttime   = 0.0,
+      lat_sed     = 0.0,
+      can_max     = 1.0,
+      esco        = 0.95,
+      epco        = 0.50,
+      orgn_enrich = 0.0,
+      orgp_enrich = 0.0,
+      cn3_swf     = hyd_params$cn3_swf,
+      bio_mix     = 0.20,
+      perco       = hyd_params$perco,
+      lat_orgn    = 0.0,
+      lat_orgp    = 0.0,
+      pet_co      = 1.0,
+      latq_co     = hyd_params$latq_co,
+      stringsAsFactors = FALSE)
+    .gis_write_safe(con, "hydrology_hyd", hyds)
+  }
+
+  # topography_hyd: one row per HRU (mirrors Python)
+  # Only insert if no HRU topography entries exist yet
+  hru_topo_count <- tryCatch(
+    DBI::dbGetQuery(con,
+      "SELECT COUNT(*) AS n FROM topography_hyd WHERE type = 'hru'")$n[1L],
+    error = function(e) 0L)
+  if (is.na(hru_topo_count) || hru_topo_count == 0L) {
+    hru_topos <- data.frame(
+      id       = topo_ids_for_hru,
+      name     = mapply(.gis_name, "topohru", hrus$id, cnt),
+      slp      = pmax(hrus$slope / 100, 0.001),
+      slp_len  = sapply(hrus$slope, .slope_len),
+      lat_len  = sapply(hrus$slope, .slope_len),
+      dist_cha = 121.0,
+      depos    = 0.0,
+      type     = "hru",
+      stringsAsFactors = FALSE)
+    .gis_write_safe(con, "topography_hyd", hru_topos)
+  }
+
+  # hru_data_hru: only create if not already present
+  if (!hru_data_exists) {
+    hru_objs <- data.frame(
+      id                 = idx,
+      name               = mapply(.gis_name, "hru", hrus$id, cnt),
+      topo_id            = topo_ids_for_hru,
+      hydro_id           = idx,
+      soil_id            = soils_id,
+      lu_mgt_id          = lu_ids,
+      soil_plant_init_id = sp_id,
+      surf_stor_id       = NA_integer_,
+      snow_id            = if (!is.na(snow_id)) snow_id else NA_integer_,
+      field_id           = NA_integer_,
+      description        = NA_character_,
+      stringsAsFactors   = FALSE)
+    .gis_write_safe(con, "hru_data_hru", hru_objs)
+  }
+
+  # hru_con: includes wst_id and hru_id (FK to hru_data_hru)
+  if (.gis_count(con, "hru_con") == 0L) {
+    hru_cons <- data.frame(
+      id     = idx,
+      name   = mapply(.gis_name, "hru", hrus$id, cnt),
+      gis_id = hrus$id,
+      area   = hrus$arslp,
+      lat    = hrus$lat,
+      lon    = hrus$lon,
+      elev   = hrus$elev,
+      wst_id = NA_integer_,
+      cst_id = NA_integer_,
+      ovfl   = 0L,
+      rule   = 0L,
+      hru_id = idx,
+      stringsAsFactors = FALSE)
+    .gis_write_safe(con, "hru_con", hru_cons)
+  }
 
   # rout_unit_ele: links HRUs to their routing units
-  lsu_area_map <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id, area FROM gis_lsus"),
-    error = function(e) data.frame(id = integer(0), area = numeric(0)))
-  arlsu_for_hru <- lsu_area_map$area[match(hrus$lsu, lsu_area_map$id)]
-  arlsu_for_hru[is.na(arlsu_for_hru) | arlsu_for_hru <= 0] <- 1.0
+  if (.gis_count(con, "rout_unit_ele") == 0L) {
+    lsu_area_map <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id, area FROM gis_lsus"),
+      error = function(e) data.frame(id = integer(0), area = numeric(0)))
+    arlsu_for_hru <- lsu_area_map$area[match(hrus$lsu, lsu_area_map$id)]
+    arlsu_for_hru[is.na(arlsu_for_hru) | arlsu_for_hru <= 0] <- 1.0
 
-  rtu_eles <- data.frame(
-    id      = idx,
-    name    = mapply(.gis_name, "hru", hrus$id, cnt),
-    rtu_id  = rtu_id_for_hru,
-    obj_id  = idx,
-    obj_typ = "hru",
-    frac    = pmin(1.0, hrus$arslp / arlsu_for_hru),
-    dlr_id  = NA_integer_,
-    stringsAsFactors = FALSE)
+    rtu_eles <- data.frame(
+      id      = idx,
+      name    = mapply(.gis_name, "hru", hrus$id, cnt),
+      rtu_id  = rtu_id_for_hru,
+      obj_typ = "hru",
+      obj_id  = idx,
+      frac    = pmin(1.0, hrus$arslp / arlsu_for_hru),
+      dlr_id  = NA_integer_,
+      stringsAsFactors = FALSE)
+    .gis_write_safe(con, "rout_unit_ele", rtu_eles)
+  }
 
-  # ls_unit_ele: minimal (id, name)
-  ls_eles <- data.frame(
-    id   = idx,
-    name = mapply(.gis_name, "hru", hrus$id, cnt),
-    stringsAsFactors = FALSE)
+  # ls_unit_ele: full columns matching Python (obj_typ, obj_typ_no, bsn_frac,
+  # sub_frac, reg_frac, ls_unit_def_id)
+  if (.gis_count(con, "ls_unit_ele") == 0L) {
+    # bsn_area = total basin area (sum of all subbasin areas)
+    bsn_area <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT SUM(area) AS tot FROM gis_subbasins")$tot[1L],
+      error = function(e) NA_real_)
+    if (is.na(bsn_area) || bsn_area <= 0) bsn_area <- sum(hrus$arslp, na.rm = TRUE)
+    if (bsn_area <= 0) bsn_area <- 1.0
 
-  .gis_write(con, "hydrology_hyd",  hyds)
-  .gis_write(con, "hru_data_hru",   hru_objs)
-  .gis_write(con, "hru_con",        hru_cons)
-  .gis_write(con, "rout_unit_ele",  rtu_eles)
-  .gis_write(con, "ls_unit_ele",    ls_eles)
+    lsu_area_map2 <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id, area FROM gis_lsus"),
+      error = function(e) data.frame(id = integer(0), area = numeric(0)))
+    arlsu2 <- lsu_area_map2$area[match(hrus$lsu, lsu_area_map2$id)]
+    arlsu2[is.na(arlsu2) | arlsu2 <= 0] <- 1.0
+
+    ls_eles <- data.frame(
+      id             = idx,
+      name           = mapply(.gis_name, "hru", hrus$id, cnt),
+      obj_typ        = "hru",
+      obj_typ_no     = idx,
+      bsn_frac       = hrus$arslp / bsn_area,
+      sub_frac       = hrus$arslp / arlsu2,
+      reg_frac       = 0.0,
+      ls_unit_def_id = rtu_id_for_hru,
+      stringsAsFactors = FALSE)
+    .gis_write_safe(con, "ls_unit_ele", ls_eles)
+  }
+
   invisible(NULL)
+}
+
+# --------------------------------------------------------------------------
+# Internal helper: compute perco, cn3_swf, latq_co from soil hydrological
+# group and slope (decimal).  Mirrors Python
+# Hydrology_hyd.get_perco_cn3_swf_latq_co()
+# --------------------------------------------------------------------------
+.get_perco_cn3_swf_latq_co <- function(hyd_grp, slope) {
+  n <- length(hyd_grp)
+  perco   <- rep(0.05, n)
+  cn3_swf <- rep(0.95, n)
+  latq_co <- rep(0.01, n)
+
+  for (i in seq_len(n)) {
+    grp <- toupper(trimws(as.character(hyd_grp[i])))
+    s   <- if (is.na(slope[i])) 0 else slope[i]
+
+    leach_pot  <- "low"
+    runoff_pot <- "low"
+
+    # Thresholds match Python exactly (slope is in decimal form = percent/100)
+    if (grp == "A") {
+      leach_pot  <- "high"
+      runoff_pot <- if (s < 6) "low" else if (s <= 12) "mod" else "high"
+    } else if (grp == "B") {
+      leach_pot  <- if (s < 6) "high" else "mod"
+      runoff_pot <- if (s < 4) "low" else if (s <= 6) "mod" else "high"
+    } else if (grp == "C") {
+      leach_pot  <- if (s < 12) "mod" else "low"
+      runoff_pot <- if (s < 2) "low" else if (s <= 6) "mod" else "high"
+    } else if (grp == "D") {
+      leach_pot  <- "low"
+      runoff_pot <- if (s < 2) "low" else if (s <= 4) "mod" else "high"
+    }
+    # else: defaults (low leach, low runoff) when hyd_grp is NA/unknown
+
+    perco[i]   <- if (leach_pot == "high") 0.9 else if (leach_pot == "mod") 0.5 else 0.05
+    cn3_swf[i] <- if (runoff_pot == "high") 0 else if (runoff_pot == "mod") 0.3 else 0.95
+    latq_co[i] <- if (runoff_pot == "high") 0.9 else if (runoff_pot == "mod") 0.2 else 0.01
+  }
+
+  list(perco = perco, cn3_swf = cn3_swf, latq_co = latq_co)
 }
 
 # Helper: ensure soils_sol has a row for every unique soil name (id, name)
