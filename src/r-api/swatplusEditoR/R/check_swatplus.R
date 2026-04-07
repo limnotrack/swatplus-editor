@@ -389,26 +389,83 @@ check_swatplus <- function(project, output_dir) {
   # ── 13. rout_unit.ele fraction sums per RTU ──────────────────────────────
   cat("\n-- 13. Routing unit element fraction sums --\n")
   
-  rtu_def <- read_swat("rout_unit.def", output_dir)
-  
-  if (!is.null(rtu_ele) && !is.null(rtu_def)) {
-    # rtu_ele has: id, name, obj_typ, obj_id, frac, dlr
-    # Group fractions and check they sum to ~1.0 (within tolerance)
-    # Since rout_unit.ele doesn't directly have a rtu_id, 
-    # use the rout_unit.def to map element ranges back to RTUs
-    # Simpler: sum all fractions across all elements
-    frac_sum <- sum(rtu_ele$frac, na.rm = TRUE)
-    n_rtus <- nrow(rtu_def)
+  if (!is.null(rtu_ele)) {
     
-    if (n_rtus > 0 && abs(frac_sum - n_rtus) > 0.01 * n_rtus) {
-      msg <- sprintf(
-        "  [WARN] Total fraction sum across all rout_unit.ele = %.4f, expected ~%d (one per RTU)",
-        frac_sum, n_rtus)
+    # Re-read rout_unit.def with enough columns
+    rtu_def_raw <- read.table(
+      file.path(output_dir, "rout_unit.def"),
+      skip = 1, header = TRUE, fill = TRUE,
+      col.names = c("id", "name", "elem_tot", paste0("e", seq_len(20)))
+    )
+    
+    # Expand range notation into full element ID sequences
+    expand_ranges <- function(parts) {
+      parts <- as.integer(parts[!is.na(parts)])
+      if (length(parts) == 0) return(integer(0))
+      
+      result   <- integer(0)
+      i        <- 1L
+      
+      while (i <= length(parts)) {
+        val <- parts[i]
+        if (val > 0) {
+          # Check if next value is negative (range end)
+          if (i + 1L <= length(parts) && parts[i + 1L] < 0) {
+            # Range: val through abs(next)
+            result <- c(result, seq(val, abs(parts[i + 1L])))
+            i <- i + 2L
+          } else {
+            # Single element
+            result <- c(result, val)
+            i <- i + 1L
+          }
+        } else {
+          i <- i + 1L  # skip orphan negatives
+        }
+      }
+      result
+    }
+    
+    frac_issues <- lapply(seq_len(nrow(rtu_def_raw)), function(i) {
+      rtu_name <- rtu_def_raw$name[i]
+      elem_tot <- as.integer(rtu_def_raw$elem_tot[i])
+      
+      if (is.na(elem_tot) || elem_tot == 0) return(NULL)
+      
+      # Get element parts (columns 4 onwards)
+      parts <- as.numeric(rtu_def_raw[i, 4:(3 + elem_tot)])
+      
+      # Expand ranges to full element ID list
+      all_ele_ids <- expand_ranges(parts)
+      
+      if (length(all_ele_ids) == 0) return(NULL)
+      
+      # Sum fractions from rout_unit.ele
+      hru_fracs <- rtu_ele$frac[rtu_ele$id %in% all_ele_ids]
+      frac_sum  <- sum(hru_fracs, na.rm = TRUE)
+      
+      if (abs(frac_sum - 1.0) > 0.01) {
+        sprintf(
+          "RTU %s: frac sum = %.4f (expected 1.0, %d elements expanded from parts: %s)",
+          rtu_name, frac_sum, length(all_ele_ids),
+          paste(parts, collapse = ", ")
+        )
+      } else {
+        NULL
+      }
+    })
+    
+    frac_issues <- Filter(Negate(is.null), frac_issues)
+    
+    if (length(frac_issues) > 0) {
+      msg <- sprintf("  [WARN] %d RTU(s) have HRU fractions not summing to 1.0",
+                     length(frac_issues))
       cat(msg, "\n")
+      cat(paste(" ", head(frac_issues, 5), collapse = "\n"), "\n")
       issues[[length(issues) + 1]] <- msg
-    } else if (n_rtus > 0) {
-      cat(sprintf("  [OK] Total fraction sum = %.4f across %d RTUs (avg %.4f per RTU)\n",
-                  frac_sum, n_rtus, frac_sum / n_rtus))
+    } else {
+      cat(sprintf("  [OK] All %d RTUs have HRU fractions summing to 1.0\n",
+                  nrow(rtu_def_raw)))
     }
   }
   
