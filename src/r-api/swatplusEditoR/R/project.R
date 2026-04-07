@@ -433,6 +433,7 @@ populate_from_gis <- function(con) {
     lat_len  = sapply(lsus$slope, .slope_len),
     dist_cha = 121.0,
     depos    = 0.0,
+    type     = "sub",
     stringsAsFactors = FALSE)
 
   fields <- data.frame(
@@ -469,7 +470,7 @@ populate_from_gis <- function(con) {
     rtu_id = idx,
     stringsAsFactors = FALSE)
 
-  .gis_write(con, "topography_hyd", topos)
+  .gis_write_safe(con, "topography_hyd", topos)
   .gis_write(con, "field_fld",      fields)
   .gis_write(con, "rout_unit_rtu",  rtus)
   .gis_write(con, "rout_unit_con",  rtu_cons)
@@ -917,7 +918,6 @@ populate_from_gis <- function(con) {
 # --------------------------------------------------------------------------
 .gis_insert_hrus <- function(con) {
   # When hru_data_hru is already populated (e.g. by rQSWATPlus), we still need
-
   # to create the related tables (hydrology_hyd, hru_con, rout_unit_ele,
   # ls_unit_ele, topography_hyd for HRUs) that depend on it.  Only skip
   # individual tables that are already populated.
