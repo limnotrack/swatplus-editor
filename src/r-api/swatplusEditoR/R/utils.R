@@ -97,3 +97,30 @@ build_update_sql <- function(table_name, values, where_clause) {
   paste0("UPDATE ", table_name, " SET ", paste(set_parts, collapse = ", "),
          " WHERE ", where_clause)
 }
+
+#' Helper to read a SWAT+ text file (skip title + header)
+#' 
+#' @param file Character. Filename relative to the output directory.
+#' @param out_dir Character. Path to the output directory. Default is the project's output
+#' directory.
+#' @param skip Integer. Number of lines to skip (default 1 for title line
+#' and header line).
+#' @param ... Additional arguments passed to \code{read.table()}.
+#' 
+#' @return A data.frame with the contents of the file, or NULL if the file is missing or cannot be read.
+#' @keywords internal
+#' @export
+read_swat <- function(file, out_dir = output_dir, skip = 1, ...) {
+  path <- file.path(out_dir, file)
+  if (!file.exists(path)) {
+    message("  [MISSING] ", file)
+    return(NULL)
+  }
+  tryCatch(
+    read.table(path, skip = skip, header = TRUE, fill = TRUE, ...),
+    error = function(e) {
+      message("  [READ ERROR] ", file, ": ", e$message)
+      NULL
+    }
+  )
+}
