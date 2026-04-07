@@ -110,7 +110,7 @@ build_update_sql <- function(table_name, values, where_clause) {
 #' @return A data.frame with the contents of the file, or NULL if the file is missing or cannot be read.
 #' @keywords internal
 #' @export
-read_swat <- function(file, out_dir = output_dir, skip = 1, ...) {
+read_swat <- function(file, out_dir, skip = 1, ...) {
   path <- file.path(out_dir, file)
   if (!file.exists(path)) {
     message("  [MISSING] ", file)

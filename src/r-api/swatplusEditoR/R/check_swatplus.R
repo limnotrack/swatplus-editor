@@ -15,7 +15,7 @@ check_swatplus <- function(project, output_dir) {
   # ── 1. Object counts ──────────────────────────────────────────────────────
   cat("-- 1. Object counts (object.cnt vs actual file rows) --\n")
   
-  cnt <- read_swat("object.cnt")
+  cnt <- read_swat("object.cnt", output_dir)
   
   if (!is.null(cnt)) {
     checks <- list(
@@ -27,7 +27,7 @@ check_swatplus <- function(project, output_dir) {
     
     for (nm in names(checks)) {
       chk  <- checks[[nm]]
-      dat  <- read_swat(chk$file, skip = 1)
+      dat  <- read_swat(chk$file, output_dir, skip = 1)
       if (is.null(dat)) next
       
       actual    <- nrow(dat)
@@ -50,8 +50,8 @@ check_swatplus <- function(project, output_dir) {
   # ── 2. HRU consistency ───────────────────────────────────────────────────
   cat("\n-- 2. HRU name consistency (hru.con vs hru-data.hru) --\n")
   
-  hru_con  <- read_swat("hru.con")
-  hru_data <- read_swat("hru-data.hru")
+  hru_con  <- read_swat("hru.con", output_dir)
+  hru_data <- read_swat("hru-data.hru", output_dir)
   
   if (!is.null(hru_con) && !is.null(hru_data)) {
     missing_hru <- setdiff(hru_con[[1]], hru_data[[1]])
@@ -69,8 +69,8 @@ check_swatplus <- function(project, output_dir) {
   # ── 3. Routing unit consistency ───────────────────────────────────────────
   cat("\n-- 3. Routing unit name consistency (rout_unit.con vs rout_unit.ele) --\n")
   
-  rtu_con <- read_swat("rout_unit.con")
-  rtu_ele <- read_swat("rout_unit.ele")
+  rtu_con <- read_swat("rout_unit.con", output_dir)
+  rtu_ele <- read_swat("rout_unit.ele", output_dir)
   
   if (!is.null(rtu_con) && !is.null(rtu_ele)) {
     missing_rtu <- setdiff(rtu_con[[1]], rtu_ele[[1]])
@@ -88,8 +88,8 @@ check_swatplus <- function(project, output_dir) {
   # ── 4. Outflow targets in rout_unit.con ───────────────────────────────────
   cat("\n-- 4. Outflow targets in rout_unit.con --\n")
   
-  cha_con <- read_swat("chandeg.con")
-  aqu_con <- read_swat("aquifer.con")
+  cha_con <- read_swat("chandeg.con", output_dir)
+  aqu_con <- read_swat("aquifer.con", output_dir)
   
   if (!is.null(rtu_con) && !is.null(cha_con) && !is.null(aqu_con)) {
     valid_targets <- c(
@@ -122,7 +122,7 @@ check_swatplus <- function(project, output_dir) {
   # ── 5. Weather station name consistency ───────────────────────────────────
   cat("\n-- 5. Weather station names (weather-sta.cli vs weather-wgn.cli) --\n")
   
-  sta <- read_swat("weather-sta.cli")
+  sta <- read_swat("weather-sta.cli", output_dir)
   wgn <- read_wgn_cli(output_dir = output_dir)
   
   if (!is.null(sta) && !is.null(wgn)) {
@@ -275,8 +275,8 @@ check_swatplus <- function(project, output_dir) {
   # ── 10. Plant community checks ───────────────────────────────────────────
   cat("\n-- 10. Plant community checks --\n")
   
-  plt <- read_swat("plants.plt")
-  lum <- read_swat("landuse.lum")
+  plt <- read_swat("plants.plt", output_dir)
+  lum <- read_swat("landuse.lum", output_dir)
   
   if (!is.null(hru_data) && !is.null(lum)) {
     # Check lu_mgt pointers in hru-data.hru exist in landuse.lum
@@ -336,6 +336,180 @@ check_swatplus <- function(project, output_dir) {
     urban_water_codes <- plt$name[grepl("^ur|^wat", plt$name, ignore.case = TRUE)]
     cat(sprintf("  [INFO] Available urban/water codes in plants.plt: %s\n",
                 paste(urban_water_codes, collapse = ", ")))
+  }
+  
+  # ── 11. HRU routing element checks ───────────────────────────────────────
+  cat("\n-- 11. HRU routing element checks (rout_unit.ele) --\n")
+  
+  if (!is.null(rtu_ele) && !is.null(hru_data)) {
+    # rout_unit.ele columns: id, name, obj_typ, obj_id, frac, dlr
+    hru_eles <- rtu_ele[rtu_ele$obj_typ == "hru", , drop = FALSE]
+    
+    if (nrow(hru_eles) == 0) {
+      msg <- "  [WARN] No HRU elements found in rout_unit.ele"
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      # Check all obj_id values reference valid HRU IDs (sequential 1..n)
+      max_hru_id <- nrow(hru_data)
+      bad_ids <- hru_eles$obj_id[hru_eles$obj_id < 1 | hru_eles$obj_id > max_hru_id]
+      if (length(bad_ids) > 0) {
+        msg <- sprintf(
+          "  [ERROR] %d rout_unit.ele HRU elements have obj_id outside valid range [1, %d]",
+          length(bad_ids), max_hru_id)
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] All %d HRU element obj_ids are valid\n", nrow(hru_eles)))
+      }
+    }
+  }
+  
+  # ── 12. Every HRU appears in rout_unit.ele ───────────────────────────────
+  cat("\n-- 12. Every HRU accounted for in routing elements --\n")
+  
+  if (!is.null(rtu_ele) && !is.null(hru_con)) {
+    hru_eles <- rtu_ele[rtu_ele$obj_typ == "hru", , drop = FALSE]
+    hru_names_in_ele <- hru_eles$name
+    hru_names_in_con <- hru_con[[1]]
+    
+    missing_from_ele <- setdiff(hru_names_in_con, hru_names_in_ele)
+    if (length(missing_from_ele) > 0) {
+      msg <- sprintf("  [ERROR] %d HRU(s) in hru.con not found in rout_unit.ele",
+                     length(missing_from_ele))
+      cat(msg, "\n")
+      cat("  First 5:", paste(head(missing_from_ele, 5), collapse = ", "), "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      cat(sprintf("  [OK] All %d HRUs from hru.con appear in rout_unit.ele\n",
+                  length(hru_names_in_con)))
+    }
+  }
+  
+  # ── 13. rout_unit.ele fraction sums per RTU ──────────────────────────────
+  cat("\n-- 13. Routing unit element fraction sums --\n")
+  
+  rtu_def <- read_swat("rout_unit.def", output_dir)
+  
+  if (!is.null(rtu_ele) && !is.null(rtu_def)) {
+    # rtu_ele has: id, name, obj_typ, obj_id, frac, dlr
+    # Group fractions and check they sum to ~1.0 (within tolerance)
+    # Since rout_unit.ele doesn't directly have a rtu_id, 
+    # use the rout_unit.def to map element ranges back to RTUs
+    # Simpler: sum all fractions across all elements
+    frac_sum <- sum(rtu_ele$frac, na.rm = TRUE)
+    n_rtus <- nrow(rtu_def)
+    
+    if (n_rtus > 0 && abs(frac_sum - n_rtus) > 0.01 * n_rtus) {
+      msg <- sprintf(
+        "  [WARN] Total fraction sum across all rout_unit.ele = %.4f, expected ~%d (one per RTU)",
+        frac_sum, n_rtus)
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else if (n_rtus > 0) {
+      cat(sprintf("  [OK] Total fraction sum = %.4f across %d RTUs (avg %.4f per RTU)\n",
+                  frac_sum, n_rtus, frac_sum / n_rtus))
+    }
+  }
+  
+  # ── 14. Outflow connectivity in connection files ─────────────────────────
+  cat("\n-- 14. Connection outflow validation --\n")
+  
+  # Parse connection files to check outflow targets
+  # Connection files have variable-width rows: base columns + repeated outflow groups
+  # Base: id, name, gis_id, area, lat, lon, elev, elem, wst, cst, ovfl, rule, out_tot
+  # Then: [obj_typ, obj_id, hyd_typ, frac] repeated out_tot times
+  
+  .parse_con_outflows <- function(con_file) {
+    dat <- read_swat(con_file, output_dir)
+    if (is.null(dat)) return(NULL)
+    # The out_tot column tells how many outflow groups follow
+    if (!"out_tot" %in% names(dat)) return(NULL)
+    
+    # Connection files are wide-format; outflow columns appear after out_tot
+    # Column positions: 1=id, 2=name, ..., 13=out_tot, 14=obj_typ, 15=obj_id, ...
+    outs <- list()
+    out_tot_col <- which(names(dat) == "out_tot")
+    if (length(out_tot_col) == 0) return(NULL)
+    
+    # Check if there are columns after out_tot (outflow data)
+    remaining_cols <- ncol(dat) - out_tot_col
+    if (remaining_cols < 4) return(NULL)
+    
+    # Extract obj_typ and obj_id from the first outflow group
+    obj_typ_col <- out_tot_col + 1
+    obj_id_col  <- out_tot_col + 2
+    
+    data.frame(
+      con_name = dat[[2]],
+      out_tot  = dat$out_tot,
+      obj_typ  = dat[[obj_typ_col]],
+      obj_id   = dat[[obj_id_col]],
+      stringsAsFactors = FALSE
+    )
+  }
+  
+  # Check hru.con outflows 
+  hru_outs <- .parse_con_outflows("hru.con")
+  if (!is.null(hru_outs)) {
+    n_with_outs <- sum(hru_outs$out_tot > 0, na.rm = TRUE)
+    n_total <- nrow(hru_outs)
+    if (n_with_outs == 0 && n_total > 0) {
+      cat(sprintf("  [INFO] hru.con: %d connections, none have outflow targets (normal for standard mode)\n", n_total))
+    } else {
+      cat(sprintf("  [OK] hru.con: %d of %d connections have outflow targets\n",
+                  n_with_outs, n_total))
+    }
+  }
+  
+  # Check rout_unit.con outflows
+  rtu_outs <- .parse_con_outflows("rout_unit.con")
+  if (!is.null(rtu_outs) && !is.null(cha_con)) {
+    rtu_with_outs <- rtu_outs[rtu_outs$out_tot > 0, , drop = FALSE]
+    n_with_outs <- nrow(rtu_with_outs)
+    n_total <- nrow(rtu_outs)
+    
+    if (n_with_outs == 0 && n_total > 0) {
+      msg <- "  [WARN] rout_unit.con: no connections have outflow targets - routing may be broken"
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      # Check obj_typ values are valid
+      valid_obj_typs <- c("sdc", "ru", "aqu", "res", "hru")
+      bad_typs <- setdiff(unique(rtu_with_outs$obj_typ), valid_obj_typs)
+      if (length(bad_typs) > 0) {
+        msg <- sprintf("  [WARN] rout_unit.con has unknown obj_typ values: %s",
+                       paste(bad_typs, collapse = ", "))
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] rout_unit.con: %d of %d connections have valid outflow targets\n",
+                    n_with_outs, n_total))
+      }
+    }
+  }
+  
+  # Check chandeg.con outflows
+  cha_outs <- .parse_con_outflows("chandeg.con")
+  if (!is.null(cha_outs)) {
+    cha_with_outs <- cha_outs[cha_outs$out_tot > 0, , drop = FALSE]
+    n_with_outs <- nrow(cha_with_outs)
+    n_total <- nrow(cha_outs)
+    
+    # Exactly one channel should have out_tot == 0 (the outlet)
+    n_outlets <- sum(cha_outs$out_tot == 0, na.rm = TRUE)
+    if (n_outlets == 0 && n_total > 0) {
+      msg <- "  [WARN] chandeg.con: no outlet channel found (all channels have outflow targets)"
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else if (n_outlets > 1) {
+      msg <- sprintf("  [WARN] chandeg.con: %d channels have no outflow (expected 1 outlet)", n_outlets)
+      cat(msg, "\n")
+      issues[[length(issues) + 1]] <- msg
+    } else {
+      cat(sprintf("  [OK] chandeg.con: %d channels with outflows, %d outlet(s)\n",
+                  n_with_outs, n_outlets))
+    }
   }
   
   # ── Summary ───────────────────────────────────────────────────────────────

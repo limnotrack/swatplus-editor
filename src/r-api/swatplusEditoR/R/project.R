@@ -1558,6 +1558,11 @@ populate_from_gis <- function(con) {
       if (!is.null(df)) .gis_write(con, "aquifer_con_out", df)
     }
 
+    if (.gis_count(con, "reservoir_con_out") == 0L && nrow(res_map) > 0L) {
+      df <- .build_con_out(c("wtr","pnd","res"), "reservoir_con_id", res_map)
+      if (!is.null(df)) .gis_write(con, "reservoir_con_out", df)
+    }
+
     if (.gis_count(con, "hru_con_out") == 0L && nrow(hru_map) > 0L) {
       df <- .build_con_out("hru", "hru_con_id", hru_map)
       if (!is.null(df)) .gis_write(con, "hru_con_out", df)
@@ -1842,6 +1847,35 @@ populate_from_gis <- function(con) {
     if (length(con_outs) > 0L)
       .gis_write(con, "chandeg_con_out", do.call(rbind, con_outs))
   }
+
+  # Build hru_lte_con_out: Each HRU routes 100% to its channel (obj_typ='sdc').
+  # Mirrors Python insert_connections_lte() which processes HRU→CH gis_routing rows.
+  hru_lte_map <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id, gis_id FROM hru_lte_con"),
+    error = function(e) data.frame(id = integer(0), gis_id = integer(0)))
+
+  if (.gis_count(con, "hru_lte_con_out") == 0L && nrow(hru_lte_map) > 0L &&
+      nrow(cha_map) > 0L) {
+    hru_rows <- routing[tolower(routing$sourcecat) == "hru" &
+                        routing$percent > 0 &
+                        tolower(routing$sinkcat) == "ch", , drop = FALSE]
+    hru_rows <- hru_rows[order(hru_rows$sourceid), , drop = FALSE]
+    hru_outs <- list()
+    for (k in seq_len(nrow(hru_rows))) {
+      r <- hru_rows[k, ]
+      src_id <- hru_lte_map$id[match(r$sourceid, hru_lte_map$gis_id)]
+      snk_id <- cha_map$id[match(r$sinkid, cha_map$gis_id)]
+      if (is.na(src_id) || is.na(snk_id)) next
+      hru_outs[[length(hru_outs) + 1L]] <- data.frame(
+        hru_lte_con_id = src_id, order_id = 1L,
+        obj_typ = "sdc", obj_id = snk_id,
+        hyd_typ = "tot", frac = 1.0,
+        stringsAsFactors = FALSE)
+    }
+    if (length(hru_outs) > 0L)
+      .gis_write(con, "hru_lte_con_out", do.call(rbind, hru_outs))
+  }
+
   invisible(NULL)
 }
 
