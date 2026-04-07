@@ -1368,30 +1368,55 @@ populate_from_gis <- function(con) {
     m$id[match(gis_id, m$gis_id)]
   }
 
-  # Routing rows excluding outlets and unsupported sink categories
+  # Build PT pass-through node lookup: sourceid -> routing row.
+  # Mirrors Python pt_source_row_dict in import_gis.py get_connections().
+  pt_rows <- routing[tolower(routing$sourcecat) == "pt", , drop = FALSE]
+  pt_dict <- if (nrow(pt_rows) > 0L) {
+    setNames(
+      lapply(seq_len(nrow(pt_rows)), function(i) pt_rows[i, , drop = FALSE]),
+      as.character(pt_rows$sourceid))
+  } else list()
+
+  # Follow a PT chain from a routing row to its first non-PT destination.
+  # Mirrors Python while-loop in get_connections():
+  #   while con_row.sinkcat == RouteCat.PT: con_row = pt_source_row_dict[con_row.sinkid]
+  .follow_pt <- function(row, max_iter = 100L) {
+    iter <- 0L
+    while (!is.null(row) && tolower(row$sinkcat) == "pt" && iter < max_iter) {
+      row  <- pt_dict[[as.character(row$sinkid)]]
+      iter <- iter + 1L
+    }
+    if (!is.null(row) && tolower(row$sinkcat) != "pt") row else NULL
+  }
+
+  # All rows with non-zero percent, excluding only explicit outlets.
+  # PT-sink rows are intentionally kept so the chain-follower can resolve them.
+  # Mirrors Python: sinkcat != RouteCat.OUTLET (PT rows are not filtered out).
   supported <- c("lsu","sub","ch","sdc","aqu","wtr","res","pnd")
-  route_valid <- routing[
-    routing$percent > 0 &
-    !tolower(routing$sinkcat) %in% c("outlet","pt"),
-  ]
+  route_src <- routing[routing$percent > 0 &
+                       !tolower(routing$sinkcat) %in% "outlet", , drop = FALSE]
 
   .build_con_out <- function(src_cats, id_col, src_map) {
-    rows_sub <- route_valid[
-      tolower(route_valid$sourcecat) %in% src_cats &
-      tolower(route_valid$sinkcat)   %in% supported, ]
+    rows_sub <- route_src[tolower(route_src$sourcecat) %in% src_cats, , drop = FALSE]
     if (nrow(rows_sub) == 0L || nrow(src_map) == 0L) return(NULL)
 
     result <- list()
     orders <- list()
     for (k in seq_len(nrow(rows_sub))) {
-      r      <- rows_sub[k, ]
-      src_id <- .lookup_id(r$sourcecat, r$sourceid)
-      snk_id <- .lookup_id(r$sinkcat,   r$sinkid)
-      typ    <- cat_to_typ[[tolower(r$sinkcat)]]
+      r <- rows_sub[k, ]
+      # Follow PT chain when the direct sink is a pass-through node.
+      con_row <- if (tolower(r$sinkcat) == "pt") .follow_pt(r) else r
+      if (is.null(con_row)) next
+      if (!tolower(con_row$sinkcat) %in% supported) next
+
+      src_id <- .lookup_id(r$sourcecat,       r$sourceid)
+      snk_id <- .lookup_id(con_row$sinkcat,   con_row$sinkid)
+      typ    <- cat_to_typ[[tolower(con_row$sinkcat)]]
       if (is.na(src_id) || is.na(snk_id) || is.null(typ)) next
       key <- as.character(src_id)
       orders[[key]] <- if (!is.null(orders[[key]])) orders[[key]] + 1L else 1L
-      hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ)) r$hyd_typ else "tot"
+      hyd <- if (!is.null(con_row$hyd_typ) && !is.na(con_row$hyd_typ) &&
+                 nzchar(con_row$hyd_typ)) con_row$hyd_typ else "tot"
       row_df <- data.frame(
         src_id, orders[[key]], typ, snk_id, hyd, r$percent / 100,
         stringsAsFactors = FALSE)
@@ -1417,24 +1442,9 @@ populate_from_gis <- function(con) {
     if (!is.null(df)) .gis_write(con, "aquifer_con_out", df)
   }
 
-  if (.gis_count(con, "hru_con_out") == 0L && nrow(rtu_map) > 0L) {
-    hru_rows <- route_valid[
-      tolower(route_valid$sourcecat) == "hru" &
-      tolower(route_valid$sinkcat)   %in% c("lsu","sub","ch","sdc"), ]
-    con_outs <- list()
-    for (k in seq_len(nrow(hru_rows))) {
-      r      <- hru_rows[k, ]
-      src_id <- .lookup_id("hru", r$sourceid)
-      snk_id <- .lookup_id(r$sinkcat, r$sinkid)
-      typ    <- cat_to_typ[[tolower(r$sinkcat)]]
-      if (is.na(src_id) || is.na(snk_id) || is.null(typ)) next
-      con_outs[[length(con_outs) + 1L]] <- data.frame(
-        hru_con_id = src_id, order_id = 1L,
-        obj_typ = typ, obj_id = snk_id, hyd_typ = "tot", frac = 1.0,
-        stringsAsFactors = FALSE)
-    }
-    if (length(con_outs) > 0L)
-      .gis_write(con, "hru_con_out", do.call(rbind, con_outs))
+  if (.gis_count(con, "hru_con_out") == 0L && nrow(hru_map) > 0L) {
+    df <- .build_con_out("hru", "hru_con_id", hru_map)
+    if (!is.null(df)) .gis_write(con, "hru_con_out", df)
   }
 
   invisible(NULL)
@@ -1547,23 +1557,47 @@ populate_from_gis <- function(con) {
   cha_map <- tryCatch(
     DBI::dbGetQuery(con, "SELECT id, gis_id FROM chandeg_con"),
     error = function(e) data.frame(id = integer(0), gis_id = integer(0)))
+
   if (.gis_count(con, "chandeg_con_out") == 0L && nrow(cha_map) > 0L) {
+    # Build PT pass-through node lookup for chain following.
+    pt_rows <- routing[tolower(routing$sourcecat) == "pt", , drop = FALSE]
+    pt_dict <- if (nrow(pt_rows) > 0L) {
+      setNames(
+        lapply(seq_len(nrow(pt_rows)), function(i) pt_rows[i, , drop = FALSE]),
+        as.character(pt_rows$sourceid))
+    } else list()
+
+    .follow_pt_lte <- function(row, max_iter = 100L) {
+      iter <- 0L
+      while (!is.null(row) && tolower(row$sinkcat) == "pt" && iter < max_iter) {
+        row  <- pt_dict[[as.character(row$sinkid)]]
+        iter <- iter + 1L
+      }
+      if (!is.null(row) && tolower(row$sinkcat) != "pt") row else NULL
+    }
+
     ch_rows <- routing[
       tolower(routing$sourcecat) %in% c("ch","sdc") &
       routing$percent > 0 &
-      !tolower(routing$sinkcat) %in% c("outlet","pt"), ]
+      !tolower(routing$sinkcat) %in% "outlet", , drop = FALSE]
     con_outs <- list()
     orders   <- list()
     for (k in seq_len(nrow(ch_rows))) {
-      r      <- ch_rows[k, ]
-      src_id <- cha_map$id[match(r$sourceid, cha_map$gis_id)]
-      snk_id <- cha_map$id[match(r$sinkid,   cha_map$gis_id)]
+      r       <- ch_rows[k, ]
+      con_row <- if (tolower(r$sinkcat) == "pt") .follow_pt_lte(r) else r
+      if (is.null(con_row)) next
+      if (!tolower(con_row$sinkcat) %in% c("ch","sdc")) next
+      src_id <- cha_map$id[match(r$sourceid,       cha_map$gis_id)]
+      snk_id <- cha_map$id[match(con_row$sinkid,   cha_map$gis_id)]
       if (is.na(src_id) || is.na(snk_id)) next
       key <- as.character(src_id)
       orders[[key]] <- if (!is.null(orders[[key]])) orders[[key]] + 1L else 1L
+      hyd <- if (!is.null(con_row$hyd_typ) && !is.na(con_row$hyd_typ) &&
+                 nzchar(con_row$hyd_typ)) con_row$hyd_typ else "tot"
       con_outs[[length(con_outs) + 1L]] <- data.frame(
         chandeg_con_id = src_id, order_id = orders[[key]],
-        obj_typ = "sdc", obj_id = snk_id, hyd_typ = "tot", frac = 1.0,
+        obj_typ = "sdc", obj_id = snk_id, hyd_typ = hyd,
+        frac = r$percent / 100,
         stringsAsFactors = FALSE)
     }
     if (length(con_outs) > 0L)

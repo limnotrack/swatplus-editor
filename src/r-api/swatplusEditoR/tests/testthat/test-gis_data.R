@@ -230,3 +230,90 @@ test_that(".gis_update_object_cnt sets lcha from chandeg_con count", {
   # obj should include lcha in the total
   expect_true(cnt$obj >= cnt$lcha)
 })
+
+# -------------------------------------------------------------------
+# Tests for .gis_insert_connections PT chain following
+# -------------------------------------------------------------------
+
+# Helper to create a test project with channels and routing through PT nodes
+create_pt_chain_project <- function() {
+  project <- create_channel_test_project()
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+
+  # Add two channels (gis_id 1 and 2) with channel routing through a PT node:
+  #   ch gis_id=1 -> PT id=99 -> ch gis_id=2
+  DBI::dbExecute(con,
+    "INSERT INTO gis_channels (id, subbasin, areac, strahler, len2, slo2, wid2, dep2, elevmin, elevmax, midlat, midlon)
+     VALUES (2, 1, 50.0, 1, 500, 0.02, 3.0, 1.0, 280, 310, -38.20, 176.40)")
+  DBI::dbExecute(con,
+    "INSERT INTO gis_routing (sourceid, sourcecat, hyd_typ, sinkid, sinkcat, percent)
+     VALUES (1, 'ch', 'tot', 99, 'pt', 100.0)")
+  DBI::dbExecute(con,
+    "INSERT INTO gis_routing (sourceid, sourcecat, hyd_typ, sinkid, sinkcat, percent)
+     VALUES (99, 'pt', 'tot', 2, 'ch', 100.0)")
+
+  # Create chandeg_con_out table
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS chandeg_con_out (
+    id INTEGER PRIMARY KEY, chandeg_con_id INTEGER, order_id INTEGER,
+    obj_typ TEXT, obj_id INTEGER, hyd_typ TEXT, frac REAL)")
+
+  DBI::dbDisconnect(con)
+  project
+}
+
+test_that(".gis_insert_connections follows PT chains for chandeg_con_out", {
+  project <- create_pt_chain_project()
+  on.exit(unlink(project$db_file))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Insert two channels so chandeg_con has gis_id=1 and gis_id=2
+  swatplusEditoR:::.gis_insert_channels(con)
+
+  chandeg <- DBI::dbGetQuery(con, "SELECT * FROM chandeg_con ORDER BY gis_id")
+  expect_equal(nrow(chandeg), 2L)
+
+  # Build connections — channel 1 routes via PT 99 to channel 2
+  swatplusEditoR:::.gis_insert_connections(con)
+
+  out <- DBI::dbGetQuery(con, "SELECT * FROM chandeg_con_out")
+  expect_equal(nrow(out), 1L)
+
+  # The source should be chandeg_con id for gis_id=1
+  src_con_id <- chandeg$id[chandeg$gis_id == 1L]
+  snk_con_id <- chandeg$id[chandeg$gis_id == 2L]
+  expect_equal(out$chandeg_con_id[1], src_con_id)
+  expect_equal(out$obj_id[1], snk_con_id)
+  expect_equal(out$obj_typ[1], "sdc")
+  expect_equal(out$hyd_typ[1], "tot")
+  expect_equal(out$frac[1], 1.0)
+})
+
+test_that(".gis_insert_connections handles direct (non-PT) channel routing", {
+  project <- create_channel_test_project()
+  on.exit(unlink(project$db_file))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Add second channel and direct ch->ch routing row
+  DBI::dbExecute(con,
+    "INSERT INTO gis_channels (id, subbasin, areac, strahler, len2, slo2, wid2, dep2, elevmin, elevmax, midlat, midlon)
+     VALUES (2, 1, 50.0, 1, 500, 0.02, 3.0, 1.0, 280, 310, -38.20, 176.40)")
+  DBI::dbExecute(con,
+    "INSERT INTO gis_routing (sourceid, sourcecat, hyd_typ, sinkid, sinkcat, percent)
+     VALUES (1, 'ch', 'tot', 2, 'ch', 100.0)")
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS chandeg_con_out (
+    id INTEGER PRIMARY KEY, chandeg_con_id INTEGER, order_id INTEGER,
+    obj_typ TEXT, obj_id INTEGER, hyd_typ TEXT, frac REAL)")
+
+  swatplusEditoR:::.gis_insert_channels(con)
+  swatplusEditoR:::.gis_insert_connections(con)
+
+  out <- DBI::dbGetQuery(con, "SELECT * FROM chandeg_con_out")
+  expect_equal(nrow(out), 1L)
+  chandeg <- DBI::dbGetQuery(con, "SELECT * FROM chandeg_con ORDER BY gis_id")
+  expect_equal(out$chandeg_con_id[1], chandeg$id[chandeg$gis_id == 1L])
+  expect_equal(out$obj_id[1],         chandeg$id[chandeg$gis_id == 2L])
+})
