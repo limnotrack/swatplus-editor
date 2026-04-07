@@ -317,3 +317,40 @@ test_that(".gis_insert_connections handles direct (non-PT) channel routing", {
   expect_equal(out$chandeg_con_id[1], chandeg$id[chandeg$gis_id == 1L])
   expect_equal(out$obj_id[1],         chandeg$id[chandeg$gis_id == 2L])
 })
+
+test_that(".gis_insert_connections falls back to sub topology when no CH rows in gis_routing", {
+  # Simulates a QSWAT+ project where gis_routing only has sub->sub rows (not ch->ch).
+  # create_gis_test_project() already has: sub1->sub2 routing + channel gis_id=1 in sub1.
+  # We just add a second channel for sub2, then verify ch_in_sub1 -> ch_in_sub2 is built.
+  project <- create_channel_test_project()
+  on.exit(unlink(project$db_file))
+
+  con <- DBI::dbConnect(RSQLite::SQLite(), project$db_file)
+  on.exit(DBI::dbDisconnect(con), add = TRUE)
+
+  # Add channel gis_id=2 in subbasin 2 (sub2 already exists from create_gis_test_project).
+  DBI::dbExecute(con,
+    "INSERT INTO gis_channels (id, subbasin, areac, strahler, len2, slo2, wid2, dep2, elevmin, elevmax, midlat, midlon)
+     VALUES (2, 2, 60.0, 1, 600, 0.015, 4.0, 1.2, 270, 310, -38.20, 176.45)")
+
+  DBI::dbExecute(con, "CREATE TABLE IF NOT EXISTS chandeg_con_out (
+    id INTEGER PRIMARY KEY, chandeg_con_id INTEGER, order_id INTEGER,
+    obj_typ TEXT, obj_id INTEGER, hyd_typ TEXT, frac REAL)")
+
+  # Existing gis_routing has sub1->sub2; no explicit ch rows.
+  swatplusEditoR:::.gis_insert_channels(con)
+  swatplusEditoR:::.gis_insert_connections(con)
+
+  chandeg <- DBI::dbGetQuery(con, "SELECT * FROM chandeg_con ORDER BY gis_id")
+  expect_equal(nrow(chandeg), 2L)
+
+  out <- DBI::dbGetQuery(con, "SELECT * FROM chandeg_con_out")
+  # sub1 routes to sub2, so ch_in_sub1 (gis_id=1) should route to ch_in_sub2 (gis_id=2)
+  expect_equal(nrow(out), 1L)
+  src_id <- chandeg$id[chandeg$gis_id == 1L]
+  snk_id <- chandeg$id[chandeg$gis_id == 2L]
+  expect_equal(out$chandeg_con_id[1], src_id)
+  expect_equal(out$obj_id[1], snk_id)
+  expect_equal(out$obj_typ[1], "sdc")
+  expect_equal(out$frac[1], 1.0)
+})

@@ -620,12 +620,29 @@ populate_from_gis <- function(con) {
     stringsAsFactors = FALSE)
 
   # chandeg_con: channel connections (same structure for standard and LTE)
+  # Fall back to subbasin lat/lon/elev when channel midlat/midlon are 0 or NA.
+  subs <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id, lat, lon, elev FROM gis_subbasins ORDER BY id"),
+    error = function(e) data.frame(id = integer(0), lat = numeric(0),
+                                   lon = numeric(0), elev = numeric(0)))
+  sub_lat  <- if (nrow(subs) > 0L) setNames(subs$lat,  as.character(subs$id)) else c()
+  sub_lon  <- if (nrow(subs) > 0L) setNames(subs$lon,  as.character(subs$id)) else c()
+  sub_elev <- if (nrow(subs) > 0L) setNames(subs$elev, as.character(subs$id)) else c()
+
+  lat  <- ifelse(!is.na(chas$midlat)  & chas$midlat  != 0,
+                 chas$midlat, sub_lat[as.character(chas$subbasin)])
+  lon  <- ifelse(!is.na(chas$midlon)  & chas$midlon  != 0,
+                 chas$midlon, sub_lon[as.character(chas$subbasin)])
+  elev <- ifelse(!is.na(chas$elevmin) & chas$elevmin != 0,
+                 chas$elevmin, sub_elev[as.character(chas$subbasin)])
+
   chan_cons <- data.frame(
     id     = idx,
     name   = mapply(.gis_name, "cha", chas$id, cnt),
     gis_id = chas$id,
-    lat    = chas$midlat,
-    lon    = chas$midlon,
+    lat    = lat,
+    lon    = lon,
+    elev   = elev,
     area   = chas$areac,
     ovfl   = 0L,
     rule   = 0L,
@@ -696,12 +713,29 @@ populate_from_gis <- function(con) {
     init_id = init_id,
     stringsAsFactors = FALSE)
 
+  # Fall back to subbasin lat/lon/elev when channel midlat/midlon are 0 or NA.
+  subs <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id, lat, lon, elev FROM gis_subbasins ORDER BY id"),
+    error = function(e) data.frame(id = integer(0), lat = numeric(0),
+                                   lon = numeric(0), elev = numeric(0)))
+  sub_lat  <- if (nrow(subs) > 0L) setNames(subs$lat,  as.character(subs$id)) else c()
+  sub_lon  <- if (nrow(subs) > 0L) setNames(subs$lon,  as.character(subs$id)) else c()
+  sub_elev <- if (nrow(subs) > 0L) setNames(subs$elev, as.character(subs$id)) else c()
+
+  lat  <- ifelse(!is.na(chas$midlat)  & chas$midlat  != 0,
+                 chas$midlat, sub_lat[as.character(chas$subbasin)])
+  lon  <- ifelse(!is.na(chas$midlon)  & chas$midlon  != 0,
+                 chas$midlon, sub_lon[as.character(chas$subbasin)])
+  elev <- ifelse(!is.na(chas$elevmin) & chas$elevmin != 0,
+                 chas$elevmin, sub_elev[as.character(chas$subbasin)])
+
   chan_cons <- data.frame(
     id     = idx,
     name   = mapply(.gis_name, "cha", chas$id, cnt),
     gis_id = chas$id,
-    lat    = chas$midlat,
-    lon    = chas$midlon,
+    lat    = lat,
+    lon    = lon,
+    elev   = elev,
     area   = chas$areac,
     ovfl   = 0L,
     rule   = 0L,
@@ -1389,12 +1423,66 @@ populate_from_gis <- function(con) {
     if (!is.null(row) && tolower(row$sinkcat) != "pt") row else NULL
   }
 
-  # All rows with non-zero percent, excluding only explicit outlets.
-  # PT-sink rows are intentionally kept so the chain-follower can resolve them.
-  # Mirrors Python: sinkcat != RouteCat.OUTLET (PT rows are not filtered out).
+  # All rows with non-zero percent, excluding explicit outlets.
+  # RouteCat.OUTLET = "X" in Python; PT-sink rows are kept for chain following.
   supported <- c("lsu","sub","ch","sdc","aqu","wtr","res","pnd")
   route_src <- routing[routing$percent > 0 &
-                       !tolower(routing$sinkcat) %in% "outlet", , drop = FALSE]
+                       !tolower(routing$sinkcat) %in% "x", , drop = FALSE]
+
+  # Fallback: if gis_routing has no explicit CH/SDC source rows, derive channel
+  # routing synthetically from the subbasin topology (sub→sub or sub→ch rows) +
+  # gis_channels.subbasin. This handles QSWAT+ projects that store only
+  # subbasin-level routing without explicit channel-to-channel rows.
+  has_ch_src <- any(tolower(routing$sourcecat) %in% c("ch","sdc"))
+  if (!has_ch_src && nrow(cha_map) > 0L) {
+    gis_cha <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id AS cha_gis_id, subbasin FROM gis_channels"),
+      error = function(e) data.frame(cha_gis_id = integer(0), subbasin = integer(0)))
+    if (nrow(gis_cha) > 0L) {
+      sub_to_cha <- setNames(gis_cha$cha_gis_id, as.character(gis_cha$subbasin))
+      sub_rows <- routing[tolower(routing$sourcecat) %in% c("sub","lsu") &
+                          routing$percent > 0 &
+                          !tolower(routing$sinkcat) %in% "x", , drop = FALSE]
+      synth <- list()
+      for (k in seq_len(nrow(sub_rows))) {
+        r <- sub_rows[k, ]
+        src_cha <- sub_to_cha[as.character(r$sourceid)]
+        if (is.na(src_cha)) next
+        snk_cha <- NA_integer_
+        sk <- tolower(r$sinkcat)
+        if (sk %in% c("sub","lsu")) {
+          snk_cha <- sub_to_cha[as.character(r$sinkid)]
+        } else if (sk %in% c("ch","sdc")) {
+          snk_cha <- r$sinkid
+        } else if (sk == "pt") {
+          # follow PT chain; if it resolves to sub/ch, map to channel
+          pt_row <- .follow_pt(r)
+          if (!is.null(pt_row)) {
+            fsk <- tolower(pt_row$sinkcat)
+            if (fsk %in% c("sub","lsu")) snk_cha <- sub_to_cha[as.character(pt_row$sinkid)]
+            else if (fsk %in% c("ch","sdc")) snk_cha <- pt_row$sinkid
+          }
+        }
+        if (is.na(snk_cha)) next
+        hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ) && nzchar(r$hyd_typ))
+                 r$hyd_typ else "tot"
+        synth[[length(synth) + 1L]] <- data.frame(
+          sourceid  = as.integer(src_cha),
+          sourcecat = "ch",
+          hyd_typ   = hyd,
+          sinkid    = as.integer(snk_cha),
+          sinkcat   = "ch",
+          percent   = r$percent,
+          stringsAsFactors = FALSE)
+      }
+      if (length(synth) > 0L) {
+        synth_df <- do.call(rbind, synth)
+        synth_df <- synth_df[!duplicated(synth_df[, c("sourceid","sinkid")]), ]
+        routing   <- rbind(routing, synth_df)
+        route_src <- rbind(route_src, synth_df)
+      }
+    }
+  }
 
   .build_con_out <- function(src_cats, id_col, src_map) {
     rows_sub <- route_src[tolower(route_src$sourcecat) %in% src_cats, , drop = FALSE]
@@ -1576,10 +1664,54 @@ populate_from_gis <- function(con) {
       if (!is.null(row) && tolower(row$sinkcat) != "pt") row else NULL
     }
 
-    ch_rows <- routing[
-      tolower(routing$sourcecat) %in% c("ch","sdc") &
-      routing$percent > 0 &
-      !tolower(routing$sinkcat) %in% "outlet", , drop = FALSE]
+    # RouteCat.OUTLET = "X" in Python; fall back to sub topology when no CH rows.
+    has_ch_src_lte <- any(tolower(routing$sourcecat) %in% c("ch","sdc"))
+    ch_routing_lte <- routing
+    if (!has_ch_src_lte) {
+      gis_cha_lte <- tryCatch(
+        DBI::dbGetQuery(con, "SELECT id AS cha_gis_id, subbasin FROM gis_channels"),
+        error = function(e) data.frame(cha_gis_id = integer(0), subbasin = integer(0)))
+      if (nrow(gis_cha_lte) > 0L) {
+        sub_to_cha_lte <- setNames(gis_cha_lte$cha_gis_id, as.character(gis_cha_lte$subbasin))
+        sub_rows_lte <- routing[tolower(routing$sourcecat) %in% c("sub","lsu") &
+                                routing$percent > 0 &
+                                !tolower(routing$sinkcat) %in% "x", , drop = FALSE]
+        synth_lte <- list()
+        for (k in seq_len(nrow(sub_rows_lte))) {
+          r <- sub_rows_lte[k, ]
+          src_cha <- sub_to_cha_lte[as.character(r$sourceid)]
+          if (is.na(src_cha)) next
+          snk_cha <- NA_integer_
+          sk <- tolower(r$sinkcat)
+          if (sk %in% c("sub","lsu")) snk_cha <- sub_to_cha_lte[as.character(r$sinkid)]
+          else if (sk %in% c("ch","sdc")) snk_cha <- r$sinkid
+          else if (sk == "pt") {
+            pt_row <- .follow_pt_lte(r)
+            if (!is.null(pt_row)) {
+              fsk <- tolower(pt_row$sinkcat)
+              if (fsk %in% c("sub","lsu")) snk_cha <- sub_to_cha_lte[as.character(pt_row$sinkid)]
+              else if (fsk %in% c("ch","sdc")) snk_cha <- pt_row$sinkid
+            }
+          }
+          if (is.na(snk_cha)) next
+          hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ) && nzchar(r$hyd_typ)) r$hyd_typ else "tot"
+          synth_lte[[length(synth_lte) + 1L]] <- data.frame(
+            sourceid = as.integer(src_cha), sourcecat = "ch", hyd_typ = hyd,
+            sinkid = as.integer(snk_cha), sinkcat = "ch", percent = r$percent,
+            stringsAsFactors = FALSE)
+        }
+        if (length(synth_lte) > 0L) {
+          s <- do.call(rbind, synth_lte)
+          s <- s[!duplicated(s[, c("sourceid","sinkid")]), ]
+          ch_routing_lte <- rbind(routing, s)
+        }
+      }
+    }
+
+    ch_rows <- ch_routing_lte[
+      tolower(ch_routing_lte$sourcecat) %in% c("ch","sdc") &
+      ch_routing_lte$percent > 0 &
+      !tolower(ch_routing_lte$sinkcat) %in% "x", , drop = FALSE]
     con_outs <- list()
     orders   <- list()
     for (k in seq_len(nrow(ch_rows))) {
