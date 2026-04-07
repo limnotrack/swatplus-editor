@@ -494,7 +494,7 @@ populate_from_gis <- function(con) {
 #   sediment_cha:   (id, name)
 #   nutrients_cha:  (id, name)
 #   channel_cha:    (id, name, init_id, hyd_id, sed_id, nut_id)
-#   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule)
+#   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule[, wst_id])
 # --------------------------------------------------------------------------
 .gis_insert_channels <- function(con) {
   if (.gis_count(con, "channel_cha") > 0L) return(invisible(NULL))
@@ -648,10 +648,23 @@ populate_from_gis <- function(con) {
     rule   = 0L,
     stringsAsFactors = FALSE)
 
+  # Assign nearest weather station to each channel
+  wst_rows <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id, lat, lon FROM weather_sta_cli"),
+    error = function(e) data.frame(id = integer(0), lat = numeric(0),
+                                   lon = numeric(0)))
+  if (nrow(wst_rows) > 0L) {
+    chan_cons$wst_id <- vapply(seq_len(nrow(chan_cons)), function(i) {
+      d2 <- (wst_rows$lat - chan_cons$lat[i])^2 +
+            (wst_rows$lon - chan_cons$lon[i])^2
+      wst_rows$id[which.min(d2)]
+    }, integer(1L))
+  }
+
   .gis_write_safe(con, "hydrology_cha",  hyds)
   .gis_write_safe(con, "sediment_cha",   seds)
   .gis_write(con, "channel_cha",    chan_chas)
-  .gis_write(con, "chandeg_con",    chan_cons)
+  .gis_write_safe(con, "chandeg_con",    chan_cons)
   invisible(NULL)
 }
 
@@ -741,9 +754,22 @@ populate_from_gis <- function(con) {
     rule   = 0L,
     stringsAsFactors = FALSE)
 
+  # Assign nearest weather station to each channel
+  wst_rows <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id, lat, lon FROM weather_sta_cli"),
+    error = function(e) data.frame(id = integer(0), lat = numeric(0),
+                                   lon = numeric(0)))
+  if (nrow(wst_rows) > 0L) {
+    chan_cons$wst_id <- vapply(seq_len(nrow(chan_cons)), function(i) {
+      d2 <- (wst_rows$lat - chan_cons$lat[i])^2 +
+            (wst_rows$lon - chan_cons$lon[i])^2
+      wst_rows$id[which.min(d2)]
+    }, integer(1L))
+  }
+
   .gis_write(con, "hyd_sed_lte_cha",  hyds)
   .gis_write(con, "channel_lte_cha",  chan_ltes)
-  .gis_write(con, "chandeg_con",      chan_cons)
+  .gis_write_safe(con, "chandeg_con",      chan_cons)
   invisible(NULL)
 }
 
@@ -1366,12 +1392,9 @@ populate_from_gis <- function(con) {
 # Schema (_con_out): (id, {tbl}_id, order_id, obj_typ, obj_id, hyd_typ, frac)
 # --------------------------------------------------------------------------
 .gis_insert_connections <- function(con) {
-  routing <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT * FROM gis_routing"),
-    error = function(e) NULL)
-  if (is.null(routing) || nrow(routing) == 0L) return(invisible(NULL))
-
-  # Build category -> {gis_id -> con_id} lookup maps
+  # Build category -> {gis_id -> con_id} lookup maps.
+  # These are needed for both routing-based and synthetic fallback logic, so
+  # they are built before the routing early-return check.
   .make_map <- function(con_tbl) {
     tryCatch(
       DBI::dbGetQuery(con, paste0("SELECT id, gis_id FROM ", con_tbl)),
@@ -1383,156 +1406,240 @@ populate_from_gis <- function(con) {
   res_map <- .make_map("reservoir_con")
   hru_map <- .make_map("hru_con")
 
-  cat_to_map <- list(
-    lsu = rtu_map, sub = rtu_map,
-    ch  = cha_map, sdc = cha_map,
-    aqu = aqu_map,
-    wtr = res_map, res = res_map, pnd = res_map,
-    hru = hru_map)
-  cat_to_typ <- list(
-    lsu = "ru",  sub = "ru",
-    ch  = "sdc", sdc = "sdc",
-    aqu = "aqu",
-    wtr = "res", res = "res", pnd = "res",
-    hru = "hru")
+  routing <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT * FROM gis_routing"),
+    error = function(e) NULL)
 
-  .lookup_id <- function(cat, gis_id) {
-    m <- cat_to_map[[tolower(cat)]]
-    if (is.null(m) || nrow(m) == 0L) return(NA_integer_)
-    m$id[match(gis_id, m$gis_id)]
-  }
+  if (!is.null(routing) && nrow(routing) > 0L) {
+    cat_to_map <- list(
+      lsu = rtu_map, sub = rtu_map,
+      ch  = cha_map, sdc = cha_map,
+      aqu = aqu_map,
+      wtr = res_map, res = res_map, pnd = res_map,
+      hru = hru_map)
+    cat_to_typ <- list(
+      lsu = "ru",  sub = "ru",
+      ch  = "sdc", sdc = "sdc",
+      aqu = "aqu",
+      wtr = "res", res = "res", pnd = "res",
+      hru = "hru")
 
-  # Build PT pass-through node lookup: sourceid -> routing row.
-  # Mirrors Python pt_source_row_dict in import_gis.py get_connections().
-  pt_rows <- routing[tolower(routing$sourcecat) == "pt", , drop = FALSE]
-  pt_dict <- if (nrow(pt_rows) > 0L) {
-    setNames(
-      lapply(seq_len(nrow(pt_rows)), function(i) pt_rows[i, , drop = FALSE]),
-      as.character(pt_rows$sourceid))
-  } else list()
-
-  # Follow a PT chain from a routing row to its first non-PT destination.
-  # Mirrors Python while-loop in get_connections():
-  #   while con_row.sinkcat == RouteCat.PT: con_row = pt_source_row_dict[con_row.sinkid]
-  .follow_pt <- function(row, max_iter = 100L) {
-    iter <- 0L
-    while (!is.null(row) && tolower(row$sinkcat) == "pt" && iter < max_iter) {
-      row  <- pt_dict[[as.character(row$sinkid)]]
-      iter <- iter + 1L
+    .lookup_id <- function(cat, gis_id) {
+      m <- cat_to_map[[tolower(cat)]]
+      if (is.null(m) || nrow(m) == 0L) return(NA_integer_)
+      m$id[match(gis_id, m$gis_id)]
     }
-    if (!is.null(row) && tolower(row$sinkcat) != "pt") row else NULL
+
+    # Build PT pass-through node lookup: sourceid -> routing row.
+    # Mirrors Python pt_source_row_dict in import_gis.py get_connections().
+    pt_rows <- routing[tolower(routing$sourcecat) == "pt", , drop = FALSE]
+    pt_dict <- if (nrow(pt_rows) > 0L) {
+      setNames(
+        lapply(seq_len(nrow(pt_rows)), function(i) pt_rows[i, , drop = FALSE]),
+        as.character(pt_rows$sourceid))
+    } else list()
+
+    # Follow a PT chain from a routing row to its first non-PT destination.
+    # Mirrors Python while-loop in get_connections():
+    #   while con_row.sinkcat == RouteCat.PT: con_row = pt_source_row_dict[con_row.sinkid]
+    .follow_pt <- function(row, max_iter = 100L) {
+      iter <- 0L
+      while (!is.null(row) && tolower(row$sinkcat) == "pt" && iter < max_iter) {
+        row  <- pt_dict[[as.character(row$sinkid)]]
+        iter <- iter + 1L
+      }
+      if (!is.null(row) && tolower(row$sinkcat) != "pt") row else NULL
+    }
+
+    # All rows with non-zero percent, excluding explicit outlets.
+    # RouteCat.OUTLET = "X" in Python; PT-sink rows are kept for chain following.
+    supported <- c("lsu","sub","ch","sdc","aqu","wtr","res","pnd")
+    route_src <- routing[routing$percent > 0 &
+                         !tolower(routing$sinkcat) %in% "x", , drop = FALSE]
+
+    # Fallback: if gis_routing has no explicit CH/SDC source rows, derive channel
+    # routing synthetically from the subbasin topology (sub→sub or sub→ch rows) +
+    # gis_channels.subbasin. This handles QSWAT+ projects that store only
+    # subbasin-level routing without explicit channel-to-channel rows.
+    has_ch_src <- any(tolower(routing$sourcecat) %in% c("ch","sdc"))
+    if (!has_ch_src && nrow(cha_map) > 0L) {
+      gis_cha <- tryCatch(
+        DBI::dbGetQuery(con, "SELECT id AS cha_gis_id, subbasin FROM gis_channels"),
+        error = function(e) data.frame(cha_gis_id = integer(0), subbasin = integer(0)))
+      if (nrow(gis_cha) > 0L) {
+        sub_to_cha <- setNames(gis_cha$cha_gis_id, as.character(gis_cha$subbasin))
+        sub_rows <- routing[tolower(routing$sourcecat) %in% c("sub","lsu") &
+                            routing$percent > 0 &
+                            !tolower(routing$sinkcat) %in% "x", , drop = FALSE]
+        synth <- list()
+        for (k in seq_len(nrow(sub_rows))) {
+          r <- sub_rows[k, ]
+          src_cha <- sub_to_cha[as.character(r$sourceid)]
+          if (is.na(src_cha)) next
+          snk_cha <- NA_integer_
+          sk <- tolower(r$sinkcat)
+          if (sk %in% c("sub","lsu")) {
+            snk_cha <- sub_to_cha[as.character(r$sinkid)]
+          } else if (sk %in% c("ch","sdc")) {
+            snk_cha <- r$sinkid
+          } else if (sk == "pt") {
+            # follow PT chain; if it resolves to sub/ch, map to channel
+            pt_row <- .follow_pt(r)
+            if (!is.null(pt_row)) {
+              fsk <- tolower(pt_row$sinkcat)
+              if (fsk %in% c("sub","lsu")) snk_cha <- sub_to_cha[as.character(pt_row$sinkid)]
+              else if (fsk %in% c("ch","sdc")) snk_cha <- pt_row$sinkid
+            }
+          }
+          if (is.na(snk_cha)) next
+          hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ) && nzchar(r$hyd_typ))
+                   r$hyd_typ else "tot"
+          synth[[length(synth) + 1L]] <- data.frame(
+            sourceid  = as.integer(src_cha),
+            sourcecat = "ch",
+            hyd_typ   = hyd,
+            sinkid    = as.integer(snk_cha),
+            sinkcat   = "ch",
+            percent   = r$percent,
+            stringsAsFactors = FALSE)
+        }
+        if (length(synth) > 0L) {
+          synth_df <- do.call(rbind, synth)
+          synth_df <- synth_df[!duplicated(synth_df[, c("sourceid","sinkid")]), ]
+          routing   <- rbind(routing, synth_df)
+          route_src <- rbind(route_src, synth_df)
+        }
+      }
+    }
+
+    .build_con_out <- function(src_cats, id_col, src_map) {
+      rows_sub <- route_src[tolower(route_src$sourcecat) %in% src_cats, , drop = FALSE]
+      if (nrow(rows_sub) == 0L || nrow(src_map) == 0L) return(NULL)
+
+      result <- list()
+      orders <- list()
+      for (k in seq_len(nrow(rows_sub))) {
+        r <- rows_sub[k, ]
+        # Follow PT chain when the direct sink is a pass-through node.
+        con_row <- if (tolower(r$sinkcat) == "pt") .follow_pt(r) else r
+        if (is.null(con_row)) next
+        if (!tolower(con_row$sinkcat) %in% supported) next
+
+        src_id <- .lookup_id(r$sourcecat,       r$sourceid)
+        snk_id <- .lookup_id(con_row$sinkcat,   con_row$sinkid)
+        typ    <- cat_to_typ[[tolower(con_row$sinkcat)]]
+        if (is.na(src_id) || is.na(snk_id) || is.null(typ)) next
+        key <- as.character(src_id)
+        orders[[key]] <- if (!is.null(orders[[key]])) orders[[key]] + 1L else 1L
+        hyd <- if (!is.null(con_row$hyd_typ) && !is.na(con_row$hyd_typ) &&
+                   nzchar(con_row$hyd_typ)) con_row$hyd_typ else "tot"
+        row_df <- data.frame(
+          src_id, orders[[key]], typ, snk_id, hyd, r$percent / 100,
+          stringsAsFactors = FALSE)
+        names(row_df) <- c(id_col, "order_id", "obj_typ", "obj_id",
+                           "hyd_typ", "frac")
+        result[[length(result) + 1L]] <- row_df
+      }
+      if (length(result) > 0L) do.call(rbind, result) else NULL
+    }
+
+    if (.gis_count(con, "rout_unit_con_out") == 0L) {
+      df <- .build_con_out(c("lsu","sub"), "rout_unit_con_id", rtu_map)
+      if (!is.null(df)) .gis_write(con, "rout_unit_con_out", df)
+    }
+
+    if (.gis_count(con, "chandeg_con_out") == 0L) {
+      df <- .build_con_out(c("ch","sdc"), "chandeg_con_id", cha_map)
+      if (!is.null(df)) .gis_write(con, "chandeg_con_out", df)
+    }
+
+    if (.gis_count(con, "aquifer_con_out") == 0L) {
+      df <- .build_con_out("aqu", "aquifer_con_id", aqu_map)
+      if (!is.null(df)) .gis_write(con, "aquifer_con_out", df)
+    }
+
+    if (.gis_count(con, "hru_con_out") == 0L && nrow(hru_map) > 0L) {
+      df <- .build_con_out("hru", "hru_con_id", hru_map)
+      if (!is.null(df)) .gis_write(con, "hru_con_out", df)
+    }
   }
 
-  # All rows with non-zero percent, excluding explicit outlets.
-  # RouteCat.OUTLET = "X" in Python; PT-sink rows are kept for chain following.
-  supported <- c("lsu","sub","ch","sdc","aqu","wtr","res","pnd")
-  route_src <- routing[routing$percent > 0 &
-                       !tolower(routing$sinkcat) %in% "x", , drop = FALSE]
+  # Synthetic fallback for aquifer_con_out when gis_routing is absent or has no
+  # AQU source rows.  Each shallow aquifer gets up to two outflow connections
+  # derived from the gis_aquifers topology:
+  #   1. sdc -> corresponding channel in the same subbasin (hyd_typ = "tot")
+  #   2. aqu -> corresponding deep aquifer via gis_aquifers.deep_aquifer (hyd_typ = "rhg")
+  # Mirrors the Python behaviour where aquifer outflows are built from gis_routing
+  # AQU rows; this fallback covers projects where those rows are absent.
+  if (.gis_count(con, "aquifer_con_out") == 0L && nrow(aqu_map) > 0L) {
+    gis_aqf <- tryCatch(
+      DBI::dbGetQuery(con,
+        "SELECT id, subbasin, deep_aquifer FROM gis_aquifers ORDER BY id"),
+      error = function(e) data.frame(id = integer(0), subbasin = integer(0),
+                                     deep_aquifer = integer(0)))
 
-  # Fallback: if gis_routing has no explicit CH/SDC source rows, derive channel
-  # routing synthetically from the subbasin topology (sub→sub or sub→ch rows) +
-  # gis_channels.subbasin. This handles QSWAT+ projects that store only
-  # subbasin-level routing without explicit channel-to-channel rows.
-  has_ch_src <- any(tolower(routing$sourcecat) %in% c("ch","sdc"))
-  if (!has_ch_src && nrow(cha_map) > 0L) {
-    gis_cha <- tryCatch(
-      DBI::dbGetQuery(con, "SELECT id AS cha_gis_id, subbasin FROM gis_channels"),
-      error = function(e) data.frame(cha_gis_id = integer(0), subbasin = integer(0)))
-    if (nrow(gis_cha) > 0L) {
-      sub_to_cha <- setNames(gis_cha$cha_gis_id, as.character(gis_cha$subbasin))
-      sub_rows <- routing[tolower(routing$sourcecat) %in% c("sub","lsu") &
-                          routing$percent > 0 &
-                          !tolower(routing$sinkcat) %in% "x", , drop = FALSE]
-      synth <- list()
-      for (k in seq_len(nrow(sub_rows))) {
-        r <- sub_rows[k, ]
-        src_cha <- sub_to_cha[as.character(r$sourceid)]
-        if (is.na(src_cha)) next
-        snk_cha <- NA_integer_
-        sk <- tolower(r$sinkcat)
-        if (sk %in% c("sub","lsu")) {
-          snk_cha <- sub_to_cha[as.character(r$sinkid)]
-        } else if (sk %in% c("ch","sdc")) {
-          snk_cha <- r$sinkid
-        } else if (sk == "pt") {
-          # follow PT chain; if it resolves to sub/ch, map to channel
-          pt_row <- .follow_pt(r)
-          if (!is.null(pt_row)) {
-            fsk <- tolower(pt_row$sinkcat)
-            if (fsk %in% c("sub","lsu")) snk_cha <- sub_to_cha[as.character(pt_row$sinkid)]
-            else if (fsk %in% c("ch","sdc")) snk_cha <- pt_row$sinkid
+    if (nrow(gis_aqf) > 0L) {
+      # Build subbasin -> channel gis_id lookup
+      gis_cha_sub <- tryCatch(
+        DBI::dbGetQuery(con, "SELECT id AS cha_gis_id, subbasin FROM gis_channels"),
+        error = function(e) data.frame(cha_gis_id = integer(0),
+                                       subbasin = integer(0)))
+      sub_to_cha_gis <- if (nrow(gis_cha_sub) > 0L)
+        setNames(gis_cha_sub$cha_gis_id, as.character(gis_cha_sub$subbasin))
+      else c()
+
+      # Separate shallow and deep aquifer_con rows by name prefix so that
+      # overlapping gis_ids between gis_aquifers and gis_deep_aquifers are
+      # resolved correctly.
+      aqu_all <- tryCatch(
+        DBI::dbGetQuery(con, "SELECT id, gis_id, name FROM aquifer_con ORDER BY id"),
+        error = function(e) data.frame(id = integer(0), gis_id = integer(0),
+                                       name = character(0)))
+      shallow_df <- aqu_all[!grepl("^aqu_deep", aqu_all$name), , drop = FALSE]
+      deep_df    <- aqu_all[ grepl("^aqu_deep", aqu_all$name), , drop = FALSE]
+      shallow_map <- if (nrow(shallow_df) > 0L)
+        setNames(shallow_df$id, as.character(shallow_df$gis_id)) else c()
+      deep_map    <- if (nrow(deep_df) > 0L)
+        setNames(deep_df$id, as.character(deep_df$gis_id)) else c()
+
+      aqu_outs <- list()
+      for (k in seq_len(nrow(gis_aqf))) {
+        row    <- gis_aqf[k, ]
+        aqu_id <- shallow_map[as.character(row$id)]
+        if (is.na(aqu_id)) next
+
+        order_id <- 0L
+
+        # Connection 1: sdc -> channel in same subbasin (total flow)
+        cha_gis_id <- sub_to_cha_gis[as.character(row$subbasin)]
+        if (!is.na(cha_gis_id)) {
+          cha_con_id <- cha_map$id[match(cha_gis_id, cha_map$gis_id)]
+          if (!is.na(cha_con_id)) {
+            order_id <- order_id + 1L
+            aqu_outs[[length(aqu_outs) + 1L]] <- data.frame(
+              aquifer_con_id = aqu_id, order_id = order_id,
+              obj_typ = "sdc", obj_id = cha_con_id,
+              hyd_typ = "tot", frac = 1.0,
+              stringsAsFactors = FALSE)
           }
         }
-        if (is.na(snk_cha)) next
-        hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ) && nzchar(r$hyd_typ))
-                 r$hyd_typ else "tot"
-        synth[[length(synth) + 1L]] <- data.frame(
-          sourceid  = as.integer(src_cha),
-          sourcecat = "ch",
-          hyd_typ   = hyd,
-          sinkid    = as.integer(snk_cha),
-          sinkcat   = "ch",
-          percent   = r$percent,
-          stringsAsFactors = FALSE)
+
+        # Connection 2: aqu -> deep aquifer (return flow, rhg)
+        if (!is.na(row$deep_aquifer) && row$deep_aquifer > 0L) {
+          deep_con_id <- deep_map[as.character(row$deep_aquifer)]
+          if (!is.na(deep_con_id)) {
+            order_id <- order_id + 1L
+            aqu_outs[[length(aqu_outs) + 1L]] <- data.frame(
+              aquifer_con_id = aqu_id, order_id = order_id,
+              obj_typ = "aqu", obj_id = deep_con_id,
+              hyd_typ = "rhg", frac = 1.0,
+              stringsAsFactors = FALSE)
+          }
+        }
       }
-      if (length(synth) > 0L) {
-        synth_df <- do.call(rbind, synth)
-        synth_df <- synth_df[!duplicated(synth_df[, c("sourceid","sinkid")]), ]
-        routing   <- rbind(routing, synth_df)
-        route_src <- rbind(route_src, synth_df)
-      }
+      if (length(aqu_outs) > 0L)
+        .gis_write(con, "aquifer_con_out", do.call(rbind, aqu_outs))
     }
-  }
-
-  .build_con_out <- function(src_cats, id_col, src_map) {
-    rows_sub <- route_src[tolower(route_src$sourcecat) %in% src_cats, , drop = FALSE]
-    if (nrow(rows_sub) == 0L || nrow(src_map) == 0L) return(NULL)
-
-    result <- list()
-    orders <- list()
-    for (k in seq_len(nrow(rows_sub))) {
-      r <- rows_sub[k, ]
-      # Follow PT chain when the direct sink is a pass-through node.
-      con_row <- if (tolower(r$sinkcat) == "pt") .follow_pt(r) else r
-      if (is.null(con_row)) next
-      if (!tolower(con_row$sinkcat) %in% supported) next
-
-      src_id <- .lookup_id(r$sourcecat,       r$sourceid)
-      snk_id <- .lookup_id(con_row$sinkcat,   con_row$sinkid)
-      typ    <- cat_to_typ[[tolower(con_row$sinkcat)]]
-      if (is.na(src_id) || is.na(snk_id) || is.null(typ)) next
-      key <- as.character(src_id)
-      orders[[key]] <- if (!is.null(orders[[key]])) orders[[key]] + 1L else 1L
-      hyd <- if (!is.null(con_row$hyd_typ) && !is.na(con_row$hyd_typ) &&
-                 nzchar(con_row$hyd_typ)) con_row$hyd_typ else "tot"
-      row_df <- data.frame(
-        src_id, orders[[key]], typ, snk_id, hyd, r$percent / 100,
-        stringsAsFactors = FALSE)
-      names(row_df) <- c(id_col, "order_id", "obj_typ", "obj_id",
-                         "hyd_typ", "frac")
-      result[[length(result) + 1L]] <- row_df
-    }
-    if (length(result) > 0L) do.call(rbind, result) else NULL
-  }
-
-  if (.gis_count(con, "rout_unit_con_out") == 0L) {
-    df <- .build_con_out(c("lsu","sub"), "rout_unit_con_id", rtu_map)
-    if (!is.null(df)) .gis_write(con, "rout_unit_con_out", df)
-  }
-
-  if (.gis_count(con, "chandeg_con_out") == 0L) {
-    df <- .build_con_out(c("ch","sdc"), "chandeg_con_id", cha_map)
-    if (!is.null(df)) .gis_write(con, "chandeg_con_out", df)
-  }
-
-  if (.gis_count(con, "aquifer_con_out") == 0L) {
-    df <- .build_con_out("aqu", "aquifer_con_id", aqu_map)
-    if (!is.null(df)) .gis_write(con, "aquifer_con_out", df)
-  }
-
-  if (.gis_count(con, "hru_con_out") == 0L && nrow(hru_map) > 0L) {
-    df <- .build_con_out("hru", "hru_con_id", hru_map)
-    if (!is.null(df)) .gis_write(con, "hru_con_out", df)
   }
 
   invisible(NULL)
