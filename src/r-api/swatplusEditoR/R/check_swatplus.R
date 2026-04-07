@@ -371,7 +371,7 @@ check_swatplus <- function(project, output_dir) {
   if (!is.null(rtu_ele) && !is.null(hru_con)) {
     hru_eles <- rtu_ele[rtu_ele$obj_typ == "hru", , drop = FALSE]
     hru_names_in_ele <- hru_eles$name
-    hru_names_in_con <- hru_con[[1]]
+    hru_names_in_con <- hru_con$name
     
     missing_from_ele <- setdiff(hru_names_in_con, hru_names_in_ele)
     if (length(missing_from_ele) > 0) {
