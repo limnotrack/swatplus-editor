@@ -1083,7 +1083,7 @@ populate_from_gis <- function(con) {
 #   topography_hyd: (id,name,slp,slp_len,lat_len,dist_cha,depos)
 #                   NOTE: appended rows, ids continue from routing-unit topos
 #   hru_data_hru:   (id,name,topo_id,hydro_id,soil_id,lu_mgt_id,
-#                    soil_plant_ini_id,surf_stor,snow_id,field_id)
+#                    soil_plant_init_id,surf_stor_id,snow_id,field_id)
 #   hru_con:        (id,name,gis_id,area,lat,lon,elev,ovfl,rule)
 #   rout_unit_ele:  (id,name,rtu_id,obj_id,obj_typ,frac,dlr_id)
 #   ls_unit_ele:    (id,name)  [minimal]

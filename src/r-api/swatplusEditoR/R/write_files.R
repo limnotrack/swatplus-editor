@@ -286,7 +286,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
            COALESCE(s.name, 'null') as soil,
            COALESCE(l.name, 'null') as lu_mgt,
            COALESCE(sp.name, 'null') as soil_plant_init,
-           COALESCE(h.surf_stor, 'null') as surf_stor,
+           COALESCE(ww.name, 'null') as surf_stor,
            COALESCE(sn.name, 'null') as snow,
            COALESCE(f.name, '0') as field
          FROM hru_data_hru h
@@ -294,7 +294,8 @@ write_direct <- function(project, output_dir, swat_version = "60",
          LEFT JOIN hydrology_hyd hy ON h.hydro_id = hy.id
          LEFT JOIN soils_sol s ON h.soil_id = s.id
          LEFT JOIN landuse_lum l ON h.lu_mgt_id = l.id
-         LEFT JOIN soil_plant_ini sp ON h.soil_plant_ini_id = sp.id
+         LEFT JOIN soil_plant_ini sp ON h.soil_plant_init_id = sp.id
+         LEFT JOIN wetland_wet ww ON h.surf_stor_id = ww.id
          LEFT JOIN snow_sno sn ON h.snow_id = sn.id
          LEFT JOIN field_fld f ON h.field_id = f.id
          ORDER BY h.id"),
