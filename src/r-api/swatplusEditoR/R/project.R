@@ -245,6 +245,25 @@ ensure_write_tables <- function(con) {
   invisible(NULL)
 }
 
+#' Add required tables and reference data to the project database
+#' 
+#' This is a wrapper around \code{ensure_write_tables()} that opens the database
+#' connection and ensures all required tables exist and are populated with reference
+#' data.  This should be called after loading a project to prepare the database for
+#' writing configuration files and running simulations.
+#' 
+#' @param project List. A SWAT+ project object with \code{db_file}.
+#' @return The input project object (invisibly).
+#' @export
+add_tables <- function(project) {
+  con <- open_project_db(project$db_file)
+  on.exit(close_db(con))
+  
+  # Ensure all required tables exist and are populated with reference data.
+  ensure_write_tables(con)
+  invisible(project)
+}
+
 # --------------------------------------------------------------------------
 # Create supplementary tables not always created by rQSWATPlus
 #

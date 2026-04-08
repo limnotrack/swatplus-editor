@@ -45,6 +45,7 @@ setup_swat_sim <- function() {
     db_file          = "swat.db",
     quiet            = TRUE
   ) |> 
+    add_tables() |> 
     set_simulation_time(day_start = 1, yrc_start = 2000,
                       day_end = 365, yrc_end = 2000) |> 
     add_weather_stations(stations) |> 
@@ -93,6 +94,9 @@ test_that("run_swatplus executes SWAT+ simulation", {
     unlink(output_dir, recursive = TRUE)
   }, add = TRUE)
 
+  gis <- read_gis_data(project)
+  lapply(gis, head)
+  
   write_config_files(project, output_dir = output_dir,
                      weather_dir = era5_dir)
   list.files(output_dir)  # Debug: check files before running
