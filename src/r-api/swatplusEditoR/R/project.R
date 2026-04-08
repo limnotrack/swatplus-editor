@@ -493,7 +493,13 @@ populate_from_gis <- function(con) {
 #   initial_cha:    (id, name, org_min_id)
 #   hydrology_cha:  (id, name, wd, dp, slp, len, mann, k)
 #   sediment_cha:   (id, name)
-#   nutrients_cha:  (id, name)
+#   nutrients_cha:  (id, name, plt_n, ptl_p, alg_stl, ben_disp, ben_nh3n,
+#                   ptln_stl, ptlp_stl, cst_stl, ben_cst, cbn_bod_co, air_rt,
+#                   cbn_bod_stl, ben_bod, bact_die, cst_decay, nh3n_no2n,
+#                   no2n_no3n, ptln_nh3n, ptlp_solp, q2e_lt, q2e_alg, chla_alg,
+#                   alg_n, alg_p, alg_o2_prod, alg_o2_resp, o2_nh3n, o2_no2n,
+#                   alg_grow, alg_resp, slr_act, lt_co, const_n, const_p,
+#                   lt_nonalg, alg_shd_l, alg_shd_nl, nh3_pref)
 #   channel_cha:    (id, name, init_id, hyd_id, sed_id, nut_id)
 #   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule[, wst_id])
 # --------------------------------------------------------------------------
@@ -520,9 +526,16 @@ populate_from_gis <- function(con) {
     DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
     error = function(e) 1L)
 
-  # One default nutrients_cha row with physics-based defaults (mirrors Python model).
-  # .gis_write_safe() silently drops columns absent from the DB schema (e.g. tests).
+  # One default nutrients_cha row with physics-based defaults (mirrors Python Nutrients_cha model).
+  # If the table exists with the wrong schema (e.g. initial-concentration columns such as
+  # 'algae', 'cbod', 'dis_ox' instead of process-parameter columns like 'alg_stl'), drop it
+  # so that .gis_write_safe() recreates it with the correct column set.
   if (.gis_count(con, "nutrients_cha") == 0L) {
+    nut_cols <- tryCatch(DBI::dbListFields(con, "nutrients_cha"),
+                         error = function(e) character(0))
+    if (length(nut_cols) > 0L && !"alg_stl" %in% nut_cols) {
+      .gis_exec(con, "DROP TABLE IF EXISTS nutrients_cha")
+    }
     nuts_def <- data.frame(
       id          = 1L,
       name        = "nutcha1",
