@@ -376,6 +376,18 @@ setup_project <- function(project) {
        hmet_id INTEGER,
        salt_id INTEGER,
        salt_cs_id INTEGER
+     )",
+    # wetland_wet: LEFT-JOINed in the hru-data.hru write query via surf_stor_id.
+    # Matches the Python Wetland_wet model in reservoir.py.
+    "CREATE TABLE IF NOT EXISTS wetland_wet (
+       id INTEGER PRIMARY KEY,
+       name TEXT NOT NULL UNIQUE,
+       init_id INTEGER,
+       hyd_id INTEGER,
+       rel_id INTEGER,
+       sed_id INTEGER,
+       nut_id INTEGER,
+       description TEXT
      )"
   )
   for (sql in sqls) {
@@ -1393,7 +1405,18 @@ populate_from_gis <- function(con) {
       DBI::dbGetQuery(con, "SELECT id FROM soil_plant_ini LIMIT 1")$id[1L],
       error = function(e) 1L))
   }
-  .gis_exec(con, "INSERT INTO soil_plant_ini (id, name, sw_frac) VALUES (1,'soilplant1',0)")
+  # Mirror Python: Soil_plant_ini.create(name='soilplant1', sw_frac=0, nutrients=nut.id)
+  # Try inserting with nutrients_id FK; fall back to minimal insert if column absent.
+  ins_ok <- tryCatch({
+    DBI::dbExecute(con,
+      "INSERT INTO soil_plant_ini (id, name, sw_frac, nutrients_id) VALUES (?,?,?,?)",
+      params = list(1L, "soilplant1", 0,
+                    if (!is.null(nut_id) && !is.na(nut_id)) nut_id else NA_integer_))
+    TRUE
+  }, error = function(e) FALSE)
+  if (!ins_ok) {
+    .gis_exec(con, "INSERT INTO soil_plant_ini (id, name, sw_frac) VALUES (1,'soilplant1',0)")
+  }
   1L
 }
 

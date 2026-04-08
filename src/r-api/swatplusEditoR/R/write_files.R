@@ -280,25 +280,7 @@ write_direct <- function(project, output_dir, swat_version = "60",
   message("  Writing HRU files...")
   write_table_section(con, output_dir, v, sv, has_cio, "hru", list(
     list(tbl = "hru_data_hru", file = "hru-data.hru",
-         query = "SELECT h.id, h.name,
-           COALESCE(t.name, 'null') as topo,
-           COALESCE(hy.name, 'null') as hydro,
-           COALESCE(s.name, 'null') as soil,
-           COALESCE(l.name, 'null') as lu_mgt,
-           COALESCE(sp.name, 'null') as soil_plant_init,
-           COALESCE(ww.name, 'null') as surf_stor,
-           COALESCE(sn.name, 'null') as snow,
-           COALESCE(f.name, '0') as field
-         FROM hru_data_hru h
-         LEFT JOIN topography_hyd t ON h.topo_id = t.id
-         LEFT JOIN hydrology_hyd hy ON h.hydro_id = hy.id
-         LEFT JOIN soils_sol s ON h.soil_id = s.id
-         LEFT JOIN landuse_lum l ON h.lu_mgt_id = l.id
-         LEFT JOIN soil_plant_ini sp ON h.soil_plant_init_id = sp.id
-         LEFT JOIN wetland_wet ww ON h.surf_stor_id = ww.id
-         LEFT JOIN snow_sno sn ON h.snow_id = sn.id
-         LEFT JOIN field_fld f ON h.field_id = f.id
-         ORDER BY h.id"),
+         query = .build_hru_data_query(con)),
     list(tbl = "hru_lte_hru", file = "hru-lte.hru")
   ))
   
@@ -577,7 +559,72 @@ write_section_file <- function(con, file_name, output_dir, v, sv,
   writer(con, output_dir, v, sv, file_name = file_name)
 }
 
-#' Write a batch of simple table-based files for a section
+# Build the hru-data.hru SELECT query adaptively.
+# Handles both current Python DB column names (soil_plant_init_id, surf_stor_id)
+# and older schema names (soil_nut_id, surf_stor), and silently falls back to
+# literal 'null' when the column or the referenced table is absent.
+# Mirrors Python Hru_data_hru.write() which calls key_name_pad() and gracefully
+# handles NULL FK values.
+.build_hru_data_query <- function(con) {
+  hru_cols <- tryCatch(DBI::dbListFields(con, "hru_data_hru"),
+                       error = function(e) character(0))
+
+  # Detect soil_plant_init FK column (Python std: soil_plant_init_id; old: soil_nut_id)
+  sp_col <- if ("soil_plant_init_id" %in% hru_cols) "soil_plant_init_id"
+             else if ("soil_nut_id" %in% hru_cols) "soil_nut_id"
+             else NULL
+
+  # Detect surf_stor FK column (Python std: surf_stor_id; old: surf_stor)
+  ss_col <- if ("surf_stor_id" %in% hru_cols) "surf_stor_id"
+             else if ("surf_stor" %in% hru_cols) "surf_stor"
+             else NULL
+
+  # Check if referenced tables exist (already ensured, but be defensive)
+  sp_ok <- !is.null(sp_col) &&
+    tryCatch({ DBI::dbGetQuery(con, "SELECT 1 FROM soil_plant_ini LIMIT 0"); TRUE },
+             error = function(e) FALSE)
+  ww_ok <- !is.null(ss_col) &&
+    tryCatch({ DBI::dbGetQuery(con, "SELECT 1 FROM wetland_wet LIMIT 0"); TRUE },
+             error = function(e) FALSE)
+
+  sp_select <- if (sp_ok) "COALESCE(sp.name, 'null') as soil_plant_init"
+               else "'null' as soil_plant_init"
+  ss_select <- if (ww_ok) "COALESCE(ww.name, 'null') as surf_stor"
+               else "'null' as surf_stor"
+
+  sp_join <- if (sp_ok) paste0("LEFT JOIN soil_plant_ini sp ON h.", sp_col, " = sp.id")
+             else NULL
+  ss_join <- if (ww_ok) paste0("LEFT JOIN wetland_wet ww ON h.", ss_col, " = ww.id")
+             else NULL
+
+  join_parts <- c(
+    "LEFT JOIN topography_hyd t ON h.topo_id = t.id",
+    "LEFT JOIN hydrology_hyd hy ON h.hydro_id = hy.id",
+    "LEFT JOIN soils_sol s ON h.soil_id = s.id",
+    "LEFT JOIN landuse_lum l ON h.lu_mgt_id = l.id",
+    sp_join, ss_join,
+    "LEFT JOIN snow_sno sn ON h.snow_id = sn.id",
+    "LEFT JOIN field_fld f ON h.field_id = f.id"
+  )
+  join_parts <- join_parts[!vapply(join_parts, is.null, logical(1))]
+
+  paste0(
+    "SELECT h.id, h.name,\n",
+    "           COALESCE(t.name, 'null') as topo,\n",
+    "           COALESCE(hy.name, 'null') as hydro,\n",
+    "           COALESCE(s.name, 'null') as soil,\n",
+    "           COALESCE(l.name, 'null') as lu_mgt,\n",
+    "           ", sp_select, ",\n",
+    "           ", ss_select, ",\n",
+    "           COALESCE(sn.name, 'null') as snow,\n",
+    "           COALESCE(f.name, '0') as field\n",
+    "         FROM hru_data_hru h\n",
+    "         ", paste(join_parts, collapse = "\n         "), "\n",
+    "         ORDER BY h.id"
+  )
+}
+
+
 #' @keywords internal
 write_table_section <- function(con, output_dir, v, sv, has_cio,
                                 section, specs) {
