@@ -219,8 +219,7 @@ get_project_info <- function(project) {
 
 #' Ensure all required SWAT+ tables exist before writing files
 #'
-#' Delegates to the \code{ensure_write_tables()} function in \pkg{rQSWATPlus},
-#' which creates any missing tables that \code{\link{write_config_files}} needs
+#' Creates any missing tables that \code{\link{write_config_files}} needs
 #' and populates mandatory tables with sensible defaults (mirroring the Python
 #' SWAT+ Editor \code{setup.py} initialisation).  Tables that already exist
 #' are left untouched.
@@ -229,18 +228,6 @@ get_project_info <- function(project) {
 #' @return Invisible \code{NULL}.
 #' @keywords internal
 ensure_write_tables <- function(con) {
-  fn <- tryCatch(
-    get("ensure_write_tables", envir = asNamespace("rQSWATPlus")),
-    error = function(e) NULL
-  )
-  if (is.null(fn)) {
-    message("Note: rQSWATPlus::ensure_write_tables() not available; ",
-            "table initialization skipped.")
-  } else {
-    fn(con)
-  }
-  # Always create any tables that rQSWATPlus may no longer create so that
-  # writers that reference them do not fail.
   .ensure_supplementary_tables(con)
   invisible(NULL)
 }
@@ -249,11 +236,10 @@ ensure_write_tables <- function(con) {
 #'
 #' Initialises the project database after running \code{rQSWATPlus::qswat_run()}
 #' by ensuring all tables required by \code{\link{write_config_files}} exist and
-#' are populated with sensible defaults.  Delegates to
-#' \code{rQSWATPlus::ensure_write_tables()} when available, then creates any
-#' supplementary tables (e.g. \code{weather_wgn_cli}, \code{object_cnt}) that
-#' newer versions of rQSWATPlus may no longer create.  Tables that already
-#' contain data are left untouched.
+#' are populated with sensible defaults.  Creates any supplementary tables
+#' (e.g. \code{weather_wgn_cli}, \code{object_cnt}, \code{initial_cha},
+#' \code{initial_aqu}, \code{delratio_del}) that may not yet exist in the
+#' database.  Tables that already contain data are left untouched.
 #'
 #' Typical usage in a setup pipeline:
 #' \preformatted{
@@ -277,11 +263,14 @@ setup_project <- function(project) {
 }
 
 # --------------------------------------------------------------------------
-# Create supplementary tables not always created by rQSWATPlus
+# Create supplementary tables needed by write_config_files()
 #
-# Mirrors Python setup.py create_tables() for tables that rQSWATPlus has
-# stopped creating.  Uses CREATE TABLE IF NOT EXISTS so existing data is
-# never touched.
+# Mirrors Python setup.py create_tables() for tables that may not be created
+# by rQSWATPlus.  Uses CREATE TABLE IF NOT EXISTS so existing data is never
+# touched.  Includes "helper" tables referenced in LEFT JOIN queries by the
+# write functions (e.g. initial_cha, initial_aqu, delratio_del, snow_sno);
+# if those tables do not exist SQLite raises "no such table" and the
+# corresponding output file is silently skipped.
 # --------------------------------------------------------------------------
 .ensure_supplementary_tables <- function(con) {
   sqls <- c(
@@ -329,18 +318,51 @@ setup_project <- function(project) {
        order_id INTEGER,
        obj_typ TEXT, obj_id INTEGER, hyd_typ TEXT, frac REAL
      )",
-    # Object counts (mirrors Python Object_cnt model / simulation.py)
+    # Object counts (mirrors Python Object_cnt model / simulation.py).
+    # Columns match the reference database schema:
+    #   id, name, obj, hru, lhru, rtu, mfl, aqu, cha, res, rec, exco,
+    #   dlr, can, pmp, out, lcha, aqu2d, hrd, wro
+    # ls_area and tot_area are computed dynamically in write_object_cnt().
     "CREATE TABLE IF NOT EXISTS object_cnt (
        id INTEGER PRIMARY KEY,
        name TEXT,
-       ls_area REAL, tot_area REAL,
        obj INTEGER DEFAULT 0,
        hru INTEGER DEFAULT 0, lhru INTEGER DEFAULT 0,
-       rtu INTEGER DEFAULT 0, gwfl INTEGER DEFAULT 0, aqu INTEGER DEFAULT 0,
+       rtu INTEGER DEFAULT 0, mfl INTEGER DEFAULT 0, aqu INTEGER DEFAULT 0,
        cha INTEGER DEFAULT 0, res INTEGER DEFAULT 0, rec INTEGER DEFAULT 0,
        exco INTEGER DEFAULT 0, dlr INTEGER DEFAULT 0, can INTEGER DEFAULT 0,
        pmp INTEGER DEFAULT 0, out INTEGER DEFAULT 0, lcha INTEGER DEFAULT 0,
        aqu2d INTEGER DEFAULT 0, hrd INTEGER DEFAULT 0, wro INTEGER DEFAULT 0
+     )",
+    # om_water_ini: referenced by initial_cha and initial_aqu; must exist
+    # before .gis_insert_channels() and .gis_insert_aquifers() try to INSERT.
+    "CREATE TABLE IF NOT EXISTS om_water_ini (
+       id INTEGER PRIMARY KEY,
+       name TEXT
+     )",
+    # initial_cha: LEFT-JOINed in the channel.cha write query; table must
+    # exist (even empty) or SQLite raises 'no such table' and the file is
+    # silently skipped.
+    "CREATE TABLE IF NOT EXISTS initial_cha (
+       id INTEGER PRIMARY KEY,
+       name TEXT,
+       org_min_id INTEGER
+     )",
+    # initial_aqu: LEFT-JOINed in the aquifer.aqu write query.
+    "CREATE TABLE IF NOT EXISTS initial_aqu (
+       id INTEGER PRIMARY KEY,
+       name TEXT,
+       org_min_id INTEGER
+     )",
+    # delratio_del: LEFT-JOINed in the rout_unit.ele write query.
+    "CREATE TABLE IF NOT EXISTS delratio_del (
+       id INTEGER PRIMARY KEY,
+       name TEXT
+     )",
+    # snow_sno: LEFT-JOINed in the hru-data.hru write query.
+    "CREATE TABLE IF NOT EXISTS snow_sno (
+       id INTEGER PRIMARY KEY,
+       name TEXT
      )"
   )
   for (sql in sqls) {
