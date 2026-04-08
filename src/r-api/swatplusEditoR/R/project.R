@@ -1542,6 +1542,7 @@ populate_from_gis <- function(con) {
   aqu_map <- .make_map("aquifer_con")
   res_map <- .make_map("reservoir_con")
   hru_map <- .make_map("hru_con")
+  rec_map <- .make_map("recall_con")
 
   routing <- tryCatch(
     DBI::dbGetQuery(con, "SELECT * FROM gis_routing"),
@@ -1703,6 +1704,39 @@ populate_from_gis <- function(con) {
     if (.gis_count(con, "hru_con_out") == 0L && nrow(hru_map) > 0L) {
       df <- .build_con_out("hru", "hru_con_id", hru_map)
       if (!is.null(df)) .gis_write(con, "hru_con_out", df)
+    }
+
+    # recall_con_out: mirrors Python insert_recall() which inserts recall_con_out
+    # for every PT->CH routing row found in gis_routing.
+    if (.gis_count(con, "recall_con_out") == 0L && nrow(rec_map) > 0L) {
+      rec_rows <- routing[tolower(routing$sourcecat) == "pt" &
+                          tolower(routing$sinkcat)   == "ch" &
+                          routing$percent > 0, , drop = FALSE]
+      if (nrow(rec_rows) > 0L) {
+        rec_out_list  <- list()
+        order_tracker <- list()
+        for (k in seq_len(nrow(rec_rows))) {
+          r          <- rec_rows[k, ]
+          rec_con_id <- rec_map$id[match(r$sourceid, rec_map$gis_id)]
+          cha_con_id <- cha_map$id[match(r$sinkid,   cha_map$gis_id)]
+          if (is.na(rec_con_id) || is.na(cha_con_id)) next
+          key               <- as.character(rec_con_id)
+          order_tracker[[key]] <- if (!is.null(order_tracker[[key]]))
+            order_tracker[[key]] + 1L else 1L
+          hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ) && nzchar(r$hyd_typ))
+            r$hyd_typ else "tot"
+          rec_out_list[[length(rec_out_list) + 1L]] <- data.frame(
+            recall_con_id = rec_con_id,
+            order_id      = order_tracker[[key]],
+            obj_typ       = "sdc",
+            obj_id        = cha_con_id,
+            hyd_typ       = hyd,
+            frac          = r$percent / 100,
+            stringsAsFactors = FALSE)
+        }
+        if (length(rec_out_list) > 0L)
+          .gis_write(con, "recall_con_out", do.call(rbind, rec_out_list))
+      }
     }
   }
 
