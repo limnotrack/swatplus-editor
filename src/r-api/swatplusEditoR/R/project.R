@@ -363,6 +363,19 @@ setup_project <- function(project) {
     "CREATE TABLE IF NOT EXISTS snow_sno (
        id INTEGER PRIMARY KEY,
        name TEXT
+     )",
+    # soil_plant_ini: LEFT-JOINed in the hru-data.hru write query and written
+    # to soil_plant.ini.  Matches the Python Soil_plant_ini model in init.py.
+    "CREATE TABLE IF NOT EXISTS soil_plant_ini (
+       id INTEGER PRIMARY KEY,
+       name TEXT NOT NULL UNIQUE,
+       sw_frac REAL DEFAULT 0,
+       nutrients_id INTEGER,
+       pest_id INTEGER,
+       path_id INTEGER,
+       hmet_id INTEGER,
+       salt_id INTEGER,
+       salt_cs_id INTEGER
      )"
   )
   for (sql in sqls) {
@@ -1380,7 +1393,7 @@ populate_from_gis <- function(con) {
       DBI::dbGetQuery(con, "SELECT id FROM soil_plant_ini LIMIT 1")$id[1L],
       error = function(e) 1L))
   }
-  .gis_exec(con, "INSERT INTO soil_plant_ini (id, name) VALUES (1,'soilplant1')")
+  .gis_exec(con, "INSERT INTO soil_plant_ini (id, name, sw_frac) VALUES (1,'soilplant1',0)")
   1L
 }
 
