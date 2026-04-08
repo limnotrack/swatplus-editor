@@ -727,7 +727,10 @@ write_object_prt <- function(con, output_dir, version = NULL,
 #' @keywords internal
 write_object_cnt <- function(con, output_dir, version = NULL,
                              swat_version = NULL, file_name = "object.cnt") {
-  if (!has_data(con, "object_cnt")) return(invisible(NULL))
+  if (!has_data(con, "object_cnt")) {
+    cli::cli_alert_warning("No data in 'object_cnt' table; skipping {file_name} output.")
+    return(invisible(NULL))
+  }
   
   row <- query_db(con, "SELECT * FROM object_cnt LIMIT 1")
   fp <- file.path(output_dir, file_name)
