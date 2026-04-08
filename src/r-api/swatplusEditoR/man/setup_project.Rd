@@ -15,11 +15,10 @@ The input \code{project} list, invisibly.
 \description{
 Initialises the project database after running \code{rQSWATPlus::qswat_run()}
 by ensuring all tables required by \code{\link{write_config_files}} exist and
-are populated with sensible defaults.  Delegates to
-\code{rQSWATPlus::ensure_write_tables()} when available, then creates any
-supplementary tables (e.g. \code{weather_wgn_cli}, \code{object_cnt}) that
-newer versions of rQSWATPlus may no longer create.  Tables that already
-contain data are left untouched.
+are populated with sensible defaults.  Creates any supplementary tables
+(e.g. \code{weather_wgn_cli}, \code{object_cnt}, \code{initial_cha},
+\code{initial_aqu}, \code{delratio_del}) that may not yet exist in the
+database.  Tables that already contain data are left untouched.
 }
 \details{
 Typical usage in a setup pipeline:

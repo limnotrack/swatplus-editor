@@ -13,8 +13,7 @@ ensure_write_tables(con)
 Invisible \code{NULL}.
 }
 \description{
-Delegates to the \code{ensure_write_tables()} function in \pkg{rQSWATPlus},
-which creates any missing tables that \code{\link{write_config_files}} needs
+Creates any missing tables that \code{\link{write_config_files}} needs
 and populates mandatory tables with sensible defaults (mirroring the Python
 SWAT+ Editor \code{setup.py} initialisation).  Tables that already exist
 are left untouched.
