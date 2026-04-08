@@ -88,8 +88,11 @@ write_direct <- function(project, output_dir, swat_version = "60",
   ensure_write_tables(con)
 
   # Populate SWAT+ model tables from GIS data (channels, HRUs, routing units,
-  # aquifers, etc.) if they are empty.  This mirrors the Python SWAT+ Editor
-  # import_gis.py::insert_default() step.
+  # aquifers, connections, etc.) if they are empty.  This mirrors the Python
+  # SWAT+ Editor import_gis.py::insert_default() step.
+  # IMPORTANT: this must complete before write_connect_section() is called so
+  # that all *_con_out tables are fully populated before the connect files are
+  # written to disk.
   populate_from_gis(con)
 
   tables <- list_db_tables(con)
@@ -218,7 +221,8 @@ write_direct <- function(project, output_dir, swat_version = "60",
                         list(tbl = "hydrology_cha", file = "hydrology.cha",
                              non_zero_min = c("wd", "dp", "slp", "len", "fps")),
                         list(tbl = "sediment_cha", file = "sediment.cha"),
-                        list(tbl = "nutrients_cha", file = "nutrients.cha"),
+                        list(tbl = "nutrients_cha", file = "nutrients.cha",
+                             ignore_id = TRUE),
                         list(tbl = "channel_lte_cha", file = "channel-lte.cha",
                              query = "SELECT c.id, c.name,
                     COALESCE(i.name, 'null') as cha_ini,

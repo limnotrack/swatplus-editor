@@ -236,11 +236,75 @@ ensure_write_tables <- function(con) {
   if (is.null(fn)) {
     message("Note: rQSWATPlus::ensure_write_tables() not available; ",
             "table initialization skipped.")
-    return(invisible(NULL))
+  } else {
+    fn(con)
   }
-  fn(con)
+  # Always create any tables that rQSWATPlus may no longer create so that
+  # writers that reference them do not fail.
+  .ensure_supplementary_tables(con)
   invisible(NULL)
 }
+
+# --------------------------------------------------------------------------
+# Create supplementary tables not always created by rQSWATPlus
+#
+# Mirrors Python setup.py create_tables() for tables that rQSWATPlus has
+# stopped creating.  Uses CREATE TABLE IF NOT EXISTS so existing data is
+# never touched.
+# --------------------------------------------------------------------------
+.ensure_supplementary_tables <- function(con) {
+  sqls <- c(
+    # Weather generator (station-level summary)
+    "CREATE TABLE IF NOT EXISTS weather_wgn_cli (
+       id INTEGER PRIMARY KEY,
+       name TEXT NOT NULL UNIQUE,
+       lat REAL NOT NULL,
+       lon REAL NOT NULL,
+       elev REAL NOT NULL,
+       rain_yrs INTEGER NOT NULL
+     )",
+    # Weather generator monthly values
+    "CREATE TABLE IF NOT EXISTS weather_wgn_cli_mon (
+       id INTEGER PRIMARY KEY,
+       weather_wgn_cli_id INTEGER NOT NULL
+         REFERENCES weather_wgn_cli(id) ON DELETE CASCADE,
+       month INTEGER NOT NULL,
+       tmp_max_ave REAL, tmp_min_ave REAL,
+       tmp_max_sd  REAL, tmp_min_sd  REAL,
+       pcp_ave  REAL, pcp_sd   REAL, pcp_skew REAL,
+       wet_dry  REAL, wet_wet  REAL, pcp_days REAL, pcp_hhr REAL,
+       slr_ave  REAL, dew_ave  REAL, wnd_ave  REAL
+     )",
+    # Wind direction climatology
+    "CREATE TABLE IF NOT EXISTS wind_dir_cli (
+       id INTEGER PRIMARY KEY,
+       name TEXT NOT NULL UNIQUE,
+       n REAL, ne REAL, e REAL, se REAL,
+       s REAL, sw REAL, w REAL, nw REAL
+     )",
+    # Atmospheric deposition station values
+    "CREATE TABLE IF NOT EXISTS atmo_cli_sta_value (
+       id INTEGER PRIMARY KEY,
+       atmo_cli_sta_id INTEGER,
+       mo INTEGER, yr INTEGER,
+       nh4_dry REAL, no3_dry REAL,
+       nh4_wet REAL, no3_wet REAL
+     )",
+    # Decision-table action outputs (populated from datasets DB by Python
+    # setup; kept as empty shell here so connect-file writers don't error)
+    "CREATE TABLE IF NOT EXISTS d_table_dtl_act_out (
+       id INTEGER PRIMARY KEY,
+       act_id INTEGER,
+       order_id INTEGER,
+       obj_typ TEXT, obj_id INTEGER, hyd_typ TEXT, frac REAL
+     )"
+  )
+  for (sql in sqls) {
+    .gis_exec(con, sql)
+  }
+  invisible(NULL)
+}
+
 
 #' Populate reference/parameter tables from the SWAT+ datasets databases
 #'
@@ -499,7 +563,7 @@ populate_from_gis <- function(con) {
 #                   no2n_no3n, ptln_nh3n, ptlp_solp, q2e_lt, q2e_alg, chla_alg,
 #                   alg_n, alg_p, alg_o2_prod, alg_o2_resp, o2_nh3n, o2_no2n,
 #                   alg_grow, alg_resp, slr_act, lt_co, const_n, const_p,
-#                   lt_nonalg, alg_shd_l, alg_shd_nl, nh3_pref)
+#                   lt_nonalg, alg_shd_l, alg_shd_nl, nh3_pref, description)
 #   channel_cha:    (id, name, init_id, hyd_id, sed_id, nut_id)
 #   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule[, wst_id])
 # --------------------------------------------------------------------------
@@ -577,6 +641,7 @@ populate_from_gis <- function(con) {
       alg_shd_l   = 0.03,
       alg_shd_nl  = 0.054,
       nh3_pref    = 0.5,
+      description = "",
       stringsAsFactors = FALSE)
     .gis_write_safe(con, "nutrients_cha", nuts_def)
   }
