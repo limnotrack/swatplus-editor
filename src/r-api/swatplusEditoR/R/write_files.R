@@ -605,8 +605,8 @@ write_table_section <- function(con, output_dir, v, sv, has_cio,
     
     # Use custom query or default table
     actual_tbl <- if (!is.null(query_tbl)) query_tbl else tbl
-    swat_write_table(con, actual_tbl,
-                     file.path(output_dir, fname),
+    swat_write_table(con, table_name = actual_tbl, 
+                     file_path = file.path(output_dir, fname),
                      version = v, swat_version = sv,
                      ignore_id = ignore_id,
                      query = custom_query,
@@ -1308,9 +1308,9 @@ write_connect_section <- function(con, output_dir, v, sv, has_cio) {
     if (is.null(fname) || fname == "null") next
     if (!has_data(con, spec$con_tbl)) next
     
-    write_connect_file(con, spec$con_tbl, spec$con_out_tbl,
-                       spec$elem_name,
-                       file.path(output_dir, fname), v, sv)
+    write_connect_file(con, con_tbl = spec$con_tbl, 
+                       con_out_tbl = spec$con_out_tbl, 
+                       elem_name = spec$elem_name, file_path = file.path(output_dir, fname), v, sv)
   }
 }
 
