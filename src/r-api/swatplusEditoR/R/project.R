@@ -328,11 +328,39 @@ setup_project <- function(project) {
        act_id INTEGER,
        order_id INTEGER,
        obj_typ TEXT, obj_id INTEGER, hyd_typ TEXT, frac REAL
+     )",
+    # Object counts (mirrors Python Object_cnt model / simulation.py)
+    "CREATE TABLE IF NOT EXISTS object_cnt (
+       id INTEGER PRIMARY KEY,
+       name TEXT,
+       ls_area REAL, tot_area REAL,
+       obj INTEGER DEFAULT 0,
+       hru INTEGER DEFAULT 0, lhru INTEGER DEFAULT 0,
+       rtu INTEGER DEFAULT 0, gwfl INTEGER DEFAULT 0, aqu INTEGER DEFAULT 0,
+       cha INTEGER DEFAULT 0, res INTEGER DEFAULT 0, rec INTEGER DEFAULT 0,
+       exco INTEGER DEFAULT 0, dlr INTEGER DEFAULT 0, can INTEGER DEFAULT 0,
+       pmp INTEGER DEFAULT 0, out INTEGER DEFAULT 0, lcha INTEGER DEFAULT 0,
+       aqu2d INTEGER DEFAULT 0, hrd INTEGER DEFAULT 0, wro INTEGER DEFAULT 0
      )"
   )
   for (sql in sqls) {
     .gis_exec(con, sql)
   }
+
+  # Populate object_cnt default row with project name if the table is empty.
+  # Mirrors Python Object_cnt.get_or_create_default(project_name).
+  if (.gis_count(con, "object_cnt") == 0L) {
+    proj_name <- tryCatch(
+      DBI::dbGetQuery(con,
+        "SELECT project_name FROM project_config LIMIT 1")$project_name[1L],
+      error = function(e) "default"
+    )
+    if (is.null(proj_name) || is.na(proj_name)) proj_name <- "default"
+    DBI::dbExecute(con,
+      "INSERT INTO object_cnt (id, name) VALUES (?, ?)",
+      params = list(1L, proj_name))
+  }
+
   invisible(NULL)
 }
 
