@@ -245,17 +245,29 @@ ensure_write_tables <- function(con) {
   invisible(NULL)
 }
 
-#' Add required tables and reference data to the project database
-#' 
-#' This is a wrapper around \code{ensure_write_tables()} that opens the database
-#' connection and ensures all required tables exist and are populated with reference
-#' data.  This should be called after loading a project to prepare the database for
-#' writing configuration files and running simulations.
-#' 
-#' @param project List. A SWAT+ project object with \code{db_file}.
-#' @return The input project object (invisibly).
+#' Set up required tables and reference data in the project database
+#'
+#' Initialises the project database after running \code{rQSWATPlus::qswat_run()}
+#' by ensuring all tables required by \code{\link{write_config_files}} exist and
+#' are populated with sensible defaults.  Delegates to
+#' \code{rQSWATPlus::ensure_write_tables()} when available, then creates any
+#' supplementary tables (e.g. \code{weather_wgn_cli}, \code{object_cnt}) that
+#' newer versions of rQSWATPlus may no longer create.  Tables that already
+#' contain data are left untouched.
+#'
+#' Typical usage in a setup pipeline:
+#' \preformatted{
+#' project <- rQSWATPlus::qswat_run(...) |>
+#'   setup_project() |>
+#'   set_simulation_time(...) |>
+#'   add_weather_stations(stations) |>
+#'   get_wgn_cfsr_world(wgn_db = wgn_db)
+#' }
+#'
+#' @param project List. A SWAT+ project object with a \code{db_file} element.
+#' @return The input \code{project} list, invisibly.
 #' @export
-add_tables <- function(project) {
+setup_project <- function(project) {
   con <- open_project_db(project$db_file)
   on.exit(close_db(con))
   

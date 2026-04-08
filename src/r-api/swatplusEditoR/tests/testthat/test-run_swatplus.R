@@ -45,7 +45,7 @@ setup_swat_sim <- function() {
     db_file          = "swat.db",
     quiet            = TRUE
   ) |> 
-    add_tables() |> 
+    setup_project() |> 
     set_simulation_time(day_start = 1, yrc_start = 2000,
                       day_end = 365, yrc_end = 2000) |> 
     add_weather_stations(stations) |> 
