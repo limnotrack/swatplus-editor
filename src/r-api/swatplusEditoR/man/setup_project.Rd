@@ -21,8 +21,9 @@ supplementary tables (e.g. \code{weather_wgn_cli}, \code{object_cnt}) that
 newer versions of rQSWATPlus may no longer create.  Tables that already
 contain data are left untouched.
 }
-\examples{
-\dontrun{
+\details{
+Typical usage in a setup pipeline:
+\preformatted{
 project <- rQSWATPlus::qswat_run(...) |>
   setup_project() |>
   set_simulation_time(...) |>
