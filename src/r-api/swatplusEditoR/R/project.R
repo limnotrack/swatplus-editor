@@ -1311,7 +1311,7 @@ populate_from_gis <- function(con) {
       obj_typ        = "hru",
       obj_typ_no     = idx,
       bsn_frac       = hrus$arslp / bsn_area,
-      sub_frac       = hrus$arslp / arlsu2,
+      sub_frac       = hrus$arslp / rtu_arslp_for_hru, # arlsu2,
       reg_frac       = 0.0,
       ls_unit_def_id = rtu_id_for_hru,
       stringsAsFactors = FALSE)
