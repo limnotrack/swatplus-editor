@@ -388,6 +388,729 @@ setup_project <- function(project) {
        sed_id INTEGER,
        nut_id INTEGER,
        description TEXT
+     )",
+
+    # ---------------------------------------------------------------
+    # Connection tables (Con / Con_out pattern from connect.py)
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS channel_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       cha_id INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS channel_con_out (
+       id INTEGER PRIMARY KEY, channel_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS outlet_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       out INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS outlet_con_out (
+       id INTEGER PRIMARY KEY, outlet_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS delratio_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       dlr_id INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS delratio_con_out (
+       id INTEGER PRIMARY KEY, delratio_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       exco_id INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_con_out (
+       id INTEGER PRIMARY KEY, exco_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS aquifer2d_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       aqu2d_id INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS aquifer2d_con_out (
+       id INTEGER PRIMARY KEY, aquifer2d_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS modflow_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       mfl INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS modflow_con_out (
+       id INTEGER PRIMARY KEY, modflow_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+
+    # Conditionally-created connection tables (fallback for non-GIS paths)
+    "CREATE TABLE IF NOT EXISTS recall_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       rec_id INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS recall_con_out (
+       id INTEGER PRIMARY KEY, recall_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS reservoir_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       res_id INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS reservoir_con_out (
+       id INTEGER PRIMARY KEY, reservoir_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS hru_con_out (
+       id INTEGER PRIMARY KEY, hru_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS hru_lte_con (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       gis_id INTEGER, area REAL, lat REAL, lon REAL, elev REAL,
+       wst_id INTEGER, cst_id INTEGER, ovfl INTEGER, rule INTEGER,
+       lhru_id INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS hru_lte_con_out (
+       id INTEGER PRIMARY KEY, hru_lte_con_id INTEGER,
+       [order] INTEGER, obj_typ TEXT, obj_id INTEGER,
+       hyd_typ TEXT, frac REAL
+     )",
+
+    # ---------------------------------------------------------------
+    # Climate / Weather tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS atmo_cli (
+       id INTEGER PRIMARY KEY,
+       filename TEXT, timestep TEXT,
+       mo_init INTEGER, yr_init INTEGER, num_aa INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS atmo_cli_sta (
+       id INTEGER PRIMARY KEY,
+       atmo_cli_id INTEGER, name TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS weather_file (
+       id INTEGER PRIMARY KEY,
+       filename TEXT, type TEXT, lat REAL, lon REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS weather_sta_cli_scale (
+       id INTEGER PRIMARY KEY,
+       weather_sta_cli_id INTEGER,
+       pcp REAL, tmin REAL, tmax REAL, slr REAL, hmd REAL, wnd REAL, pet REAL
+     )",
+
+    # ---------------------------------------------------------------
+    # Recall data tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS recall_rec (
+       id INTEGER PRIMARY KEY,
+       name TEXT UNIQUE,
+       rec_typ INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS recall_dat (
+       id INTEGER PRIMARY KEY,
+       recall_rec_id INTEGER,
+       jday INTEGER, mo INTEGER, day_mo INTEGER, yr INTEGER,
+       ob_typ TEXT, ob_name TEXT,
+       flo REAL, sed REAL, orgn REAL, sedp REAL, no3 REAL, solp REAL,
+       chla REAL, nh3 REAL, no2 REAL, cbod REAL, dox REAL,
+       sand REAL, silt REAL, clay REAL, sag REAL, lag REAL, gravel REAL, tmp REAL
+     )",
+
+    # ---------------------------------------------------------------
+    # Reservoir / Wetland parameter tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS initial_res (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       org_min_id INTEGER, pest_id INTEGER, path_id INTEGER,
+       hmet_id INTEGER, salt_id INTEGER, salt_cs_id INTEGER,
+       description TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS hydrology_res (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       yr_op INTEGER, mon_op INTEGER,
+       area_ps REAL, vol_ps REAL, area_es REAL, vol_es REAL,
+       k REAL, evap_co REAL, shp_co1 REAL, shp_co2 REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS nutrients_res (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       mid_start INTEGER, mid_end INTEGER,
+       mid_n_stl REAL, n_stl REAL, mid_p_stl REAL, p_stl REAL,
+       chla_co REAL, secchi_co REAL, theta_n REAL, theta_p REAL,
+       n_min_stl REAL, p_min_stl REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS sediment_res (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       sed_amt REAL, d50 REAL, carbon REAL, bd REAL,
+       sed_stl REAL, stl_vel REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS weir_res (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       linear_c REAL, exp_k REAL, width REAL, height REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS reservoir_res (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       init_id INTEGER, hyd_id INTEGER, rel_id INTEGER,
+       sed_id INTEGER, nut_id INTEGER, description TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS hydrology_wet (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       hru_ps REAL, dp_ps REAL, hru_es REAL, dp_es REAL,
+       k REAL, evap REAL, vol_area_co REAL,
+       vol_dp_a REAL, vol_dp_b REAL, hru_frac REAL
+     )",
+
+    # ---------------------------------------------------------------
+    # Channel LTE tables (conditionally created)
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS channel_lte_cha (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       init_id INTEGER, hyd_id INTEGER, sed_id INTEGER,
+       nut_id INTEGER, description TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS hyd_sed_lte_cha (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       [order] TEXT,
+       wd REAL, dp REAL, slp REAL, len REAL, mann REAL, k REAL,
+       erod_fact REAL, cov_fact REAL, sinu REAL, eq_slp REAL,
+       d50 REAL, clay REAL, carbon REAL, dry_bd REAL,
+       side_slp REAL, bankfull_flo REAL, fps REAL, fpn REAL,
+       n_conc REAL, p_conc REAL, p_bio REAL, description TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS hru_lte_hru (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       description TEXT
+     )",
+
+    # ---------------------------------------------------------------
+    # Initialization tables (pest/path/hmet/salt)
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS pest_hru_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS pest_hru_ini_item (
+       id INTEGER PRIMARY KEY,
+       pest_hru_ini_id INTEGER, name_id INTEGER,
+       plant REAL, soil REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS pest_water_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS pest_water_ini_item (
+       id INTEGER PRIMARY KEY,
+       pest_water_ini_id INTEGER, name_id INTEGER,
+       water REAL, benthic REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS path_hru_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS path_hru_ini_item (
+       id INTEGER PRIMARY KEY,
+       path_hru_ini_id INTEGER, name_id INTEGER,
+       plant REAL, soil REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS path_water_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS path_water_ini_item (
+       id INTEGER PRIMARY KEY,
+       path_water_ini_id INTEGER, name_id INTEGER,
+       water REAL, benthic REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS hmet_hru_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS hmet_hru_ini_item (
+       id INTEGER PRIMARY KEY,
+       hmet_hru_ini_id INTEGER, name_id INTEGER,
+       plant REAL, soil REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS hmet_water_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS hmet_water_ini_item (
+       id INTEGER PRIMARY KEY,
+       hmet_water_ini_id INTEGER, name_id INTEGER,
+       water REAL, benthic REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_hru_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_hru_ini_item (
+       id INTEGER PRIMARY KEY,
+       salt_hru_ini_id INTEGER, name_id INTEGER,
+       plant REAL, soil REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_water_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_water_ini_item (
+       id INTEGER PRIMARY KEY,
+       salt_water_ini_id INTEGER, name_id INTEGER,
+       water REAL, benthic REAL
+     )",
+
+    # ---------------------------------------------------------------
+    # Reference/parameter tables (metals, salts, nutrients_sol)
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS metals_mtl (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS salts_slt (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS nutrients_sol (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       exp_co REAL, lab_p REAL, nitrate REAL, fr_hum_act REAL,
+       hum_c_n REAL, hum_c_p REAL, inorgp REAL, watersol_p REAL,
+       h3a_p REAL, mehlich_p REAL, bray_strong_p REAL,
+       description TEXT
+     )",
+
+    # ---------------------------------------------------------------
+    # Constituents
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS constituents_cs (
+       id INTEGER PRIMARY KEY, name TEXT,
+       pest_coms TEXT, path_coms TEXT, hmet_coms TEXT, salt_coms TEXT
+     )",
+
+    # ---------------------------------------------------------------
+    # Calibration tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS calibration_cal (
+       id INTEGER PRIMARY KEY,
+       cal_parm_id INTEGER, chg_typ TEXT, chg_val REAL,
+       soil_lyr1 INTEGER, soil_lyr2 INTEGER,
+       yr1 INTEGER, yr2 INTEGER, day1 INTEGER, day2 INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS calibration_cal_cond (
+       id INTEGER PRIMARY KEY,
+       calibration_cal_id INTEGER,
+       cond_typ TEXT, cond_op TEXT, cond_val REAL, cond_val_text TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS calibration_cal_elem (
+       id INTEGER PRIMARY KEY,
+       calibration_cal_id INTEGER,
+       obj_typ TEXT, obj_id INTEGER
+     )",
+
+    # ---------------------------------------------------------------
+    # Region / Cataloging-unit tables
+    # ---------------------------------------------------------------
+    # Aquifer regions
+    "CREATE TABLE IF NOT EXISTS aqu_catunit_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS aqu_catunit_def_elem (
+       id INTEGER PRIMARY KEY, aqu_catunit_def_id INTEGER, elem INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS aqu_catunit_ele (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       obj_typ TEXT, obj_typ_no INTEGER,
+       bsn_frac REAL, sub_frac REAL, reg_frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS aqu_reg_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS aqu_reg_def_elem (
+       id INTEGER PRIMARY KEY, aqu_reg_def_id INTEGER, elem INTEGER
+     )",
+    # Channel regions
+    "CREATE TABLE IF NOT EXISTS ch_catunit_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS ch_catunit_def_elem (
+       id INTEGER PRIMARY KEY, ch_catunit_def_id INTEGER, elem INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS ch_catunit_ele (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       obj_typ TEXT, obj_typ_no INTEGER,
+       bsn_frac REAL, sub_frac REAL, reg_frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS ch_reg_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS ch_reg_def_elem (
+       id INTEGER PRIMARY KEY, ch_reg_def_id INTEGER, elem INTEGER
+     )",
+    # Reservoir regions
+    "CREATE TABLE IF NOT EXISTS res_catunit_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS res_catunit_def_elem (
+       id INTEGER PRIMARY KEY, res_catunit_def_id INTEGER, elem INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS res_catunit_ele (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       obj_typ TEXT, obj_typ_no INTEGER,
+       bsn_frac REAL, sub_frac REAL, reg_frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS res_reg_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS res_reg_def_elem (
+       id INTEGER PRIMARY KEY, res_reg_def_id INTEGER, elem INTEGER
+     )",
+    # Recall regions
+    "CREATE TABLE IF NOT EXISTS rec_catunit_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS rec_catunit_def_elem (
+       id INTEGER PRIMARY KEY, rec_catunit_def_id INTEGER, elem INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS rec_catunit_ele (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       obj_typ TEXT, obj_typ_no INTEGER,
+       bsn_frac REAL, sub_frac REAL, reg_frac REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS rec_reg_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS rec_reg_def_elem (
+       id INTEGER PRIMARY KEY, rec_reg_def_id INTEGER, elem INTEGER
+     )",
+    # Landscape regions
+    "CREATE TABLE IF NOT EXISTS ls_reg_def (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, area REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS ls_reg_ele (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       obj_typ TEXT, obj_typ_no INTEGER,
+       bsn_frac REAL, sub_frac REAL, reg_frac REAL,
+       ls_reg_def_id INTEGER
+     )",
+
+    # ---------------------------------------------------------------
+    # Exchange (EXCO) tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS exco_om_exc (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       flo REAL, sed REAL, orgn REAL, sedp REAL, no3 REAL, solp REAL,
+       chla REAL, nh3 REAL, no2 REAL, cbod REAL, dox REAL,
+       sand REAL, silt REAL, clay REAL, sag REAL, lag REAL, gravel REAL, tmp REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_pest_exc (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_pest_col (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_pest_val (
+       id INTEGER PRIMARY KEY, row_id INTEGER, col_id INTEGER,
+       pest_sol REAL, pest_sor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_path_exc (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_path_col (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_path_val (
+       id INTEGER PRIMARY KEY, row_id INTEGER, col_id INTEGER,
+       path_sol REAL, path_sor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_hmet_exc (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_hmet_col (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_hmet_val (
+       id INTEGER PRIMARY KEY, row_id INTEGER, col_id INTEGER,
+       hmet_sol REAL, hmet_sor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_salt_exc (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_salt_col (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_salt_val (
+       id INTEGER PRIMARY KEY, row_id INTEGER, col_id INTEGER,
+       salt_sol REAL, salt_sor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS exco_exc (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       om_id INTEGER, pest_id INTEGER, path_id INTEGER,
+       hmet_id INTEGER, salt_id INTEGER
+     )",
+
+    # ---------------------------------------------------------------
+    # Delivery ratio (DR) tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS dr_om_del (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       flo REAL, sed REAL, orgn REAL, sedp REAL, no3 REAL, solp REAL,
+       chla REAL, nh3 REAL, no2 REAL, cbod REAL, dox REAL,
+       sand REAL, silt REAL, clay REAL, sag REAL, lag REAL, gravel REAL, tmp REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_pest_del (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_pest_col (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_pest_val (
+       id INTEGER PRIMARY KEY, row_id INTEGER, col_id INTEGER,
+       pest_sol REAL, pest_sor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_path_del (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_path_col (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_path_val (
+       id INTEGER PRIMARY KEY, row_id INTEGER, col_id INTEGER,
+       path_sol REAL, path_sor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_hmet_del (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_hmet_col (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_hmet_val (
+       id INTEGER PRIMARY KEY, row_id INTEGER, col_id INTEGER,
+       hmet_sol REAL, hmet_sor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_salt_del (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_salt_col (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS dr_salt_val (
+       id INTEGER PRIMARY KEY, row_id INTEGER, col_id INTEGER,
+       salt_sol REAL, salt_sor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS rout_unit_dr (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       temp REAL, flo REAL, sed REAL, orgn REAL, sedp REAL, no3 REAL, solp REAL,
+       pest_sol REAL, pest_sorb REAL, chl_a REAL, nh3 REAL, no2 REAL, cbn_bod REAL,
+       dis_ox REAL, bact_p REAL, bact_lp REAL, met1 REAL, met2 REAL, met3 REAL,
+       san REAL, sil REAL, cla REAL, sag REAL, lag REAL, grv REAL
+     )",
+
+    # ---------------------------------------------------------------
+    # Channel-surface / channel-aquifer link tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS chan_surf_lin (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS chan_surf_lin_ob (
+       id INTEGER PRIMARY KEY, chan_surf_lin_id INTEGER,
+       obj_typ INTEGER, obj_id INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS chan_aqu_lin (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS chan_aqu_lin_ob (
+       id INTEGER PRIMARY KEY, chan_aqu_lin_id INTEGER, aqu_no INTEGER
+     )",
+
+    # ---------------------------------------------------------------
+    # Print / Output configuration tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS print_prt_aa_int (
+       id INTEGER PRIMARY KEY, print_prt_id INTEGER, year INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS object_prt (
+       id INTEGER PRIMARY KEY,
+       ob_typ TEXT, ob_typ_no INTEGER, hyd_typ TEXT, filename TEXT
+     )",
+
+    # ---------------------------------------------------------------
+    # Scenario feature tracking (SFT) tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS codes_sft (
+       id INTEGER PRIMARY KEY,
+       landscape INTEGER DEFAULT 0,
+       hyd TEXT DEFAULT 'n',
+       plnt INTEGER DEFAULT 0, sed INTEGER DEFAULT 0,
+       nut INTEGER DEFAULT 0, ch_sed INTEGER DEFAULT 0,
+       ch_nut INTEGER DEFAULT 0, res INTEGER DEFAULT 0
+     )",
+    "CREATE TABLE IF NOT EXISTS water_balance_sft (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS water_balance_sft_item (
+       id INTEGER PRIMARY KEY, water_balance_sft_id INTEGER,
+       name TEXT,
+       surq_rto REAL, latq_rto REAL, perc_rto REAL, et_rto REAL, tileq_rto REAL,
+       pet REAL, sed REAL, wyr REAL, bfr REAL, solp REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS wb_parms_sft (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       chg_typ TEXT, neg REAL, pos REAL, lo REAL, up REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS ch_sed_budget_sft (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS ch_sed_budget_sft_item (
+       id INTEGER PRIMARY KEY, ch_sed_budget_sft_id INTEGER,
+       name TEXT,
+       cha_wide REAL, cha_dc_accr REAL, head_cut REAL, fp_accr REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS ch_sed_parms_sft (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       chg_typ TEXT, neg REAL, pos REAL, lo REAL, up REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS plant_gro_sft (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS plant_gro_sft_item (
+       id INTEGER PRIMARY KEY, plant_gro_sft_id INTEGER,
+       name TEXT,
+       yld REAL, npp REAL, lai_mx REAL, wstress REAL, astress REAL, tstress REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS plant_parms_sft (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE
+     )",
+    "CREATE TABLE IF NOT EXISTS plant_parms_sft_item (
+       id INTEGER PRIMARY KEY, plant_parms_sft_id INTEGER,
+       var TEXT, name TEXT,
+       init REAL, neg REAL, pos REAL, lo REAL, up REAL
+     )",
+
+    # ---------------------------------------------------------------
+    # Salt module tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS salt_module (
+       id INTEGER PRIMARY KEY,
+       enabled INTEGER DEFAULT 0, recall INTEGER DEFAULT 0,
+       atmo INTEGER DEFAULT 0, road INTEGER DEFAULT 0,
+       fert INTEGER DEFAULT 0, irrigation INTEGER DEFAULT 0,
+       urban INTEGER DEFAULT 0, plants_uptake INTEGER DEFAULT 0,
+       atmo_timestep TEXT, road_timestep TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_recall_rec (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE, rec_typ INTEGER
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_recall_dat (
+       id INTEGER PRIMARY KEY, recall_rec_id INTEGER,
+       jday INTEGER, mo INTEGER, day_mo INTEGER, yr INTEGER,
+       ob_typ TEXT, ob_name TEXT,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_atmo_cli (
+       id INTEGER PRIMARY KEY, sta_id INTEGER, timestep INTEGER,
+       so4_wet REAL, ca_wet REAL, mg_wet REAL, na_wet REAL,
+       k_wet REAL, cl_wet REAL, co3_wet REAL, hco3_wet REAL,
+       so4_dry REAL, ca_dry REAL, mg_dry REAL, na_dry REAL,
+       k_dry REAL, cl_dry REAL, co3_dry REAL, hco3_dry REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_road (
+       id INTEGER PRIMARY KEY, sta_id INTEGER, timestep INTEGER,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_fertilizer_frt (
+       id INTEGER PRIMARY KEY, name_id INTEGER,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_urban (
+       id INTEGER PRIMARY KEY, name_id INTEGER,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_plants_flags (
+       id INTEGER PRIMARY KEY,
+       enabled INTEGER DEFAULT 0, soil INTEGER DEFAULT 0,
+       stress INTEGER DEFAULT 0, conversion_factor REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_plants (
+       id INTEGER PRIMARY KEY, name_id INTEGER,
+       a REAL, b REAL,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_aqu_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL,
+       caco3 REAL, mgco3 REAL, caso4 REAL, mgso4 REAL, nacl REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_channel_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_res_ini (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_hru_ini_cs (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       soil_so4 REAL, soil_ca REAL, soil_mg REAL, soil_na REAL,
+       soil_k REAL, soil_cl REAL, soil_co3 REAL, soil_hco3 REAL,
+       soil_caco3 REAL, soil_mgco3 REAL, soil_caso4 REAL, soil_mgso4 REAL, soil_nacl REAL,
+       plant_so4 REAL, plant_ca REAL, plant_mg REAL, plant_na REAL,
+       plant_k REAL, plant_cl REAL, plant_co3 REAL, plant_hco3 REAL,
+       plant_caco3 REAL, plant_mgco3 REAL, plant_caso4 REAL, plant_mgso4 REAL, plant_nacl REAL
+     )",
+    "CREATE TABLE IF NOT EXISTS salt_irrigation (
+       id INTEGER PRIMARY KEY, name_id INTEGER,
+       so4 REAL, ca REAL, mg REAL, na REAL, k REAL,
+       cl REAL, co3 REAL, hco3 REAL
+     )",
+
+    # ---------------------------------------------------------------
+    # Water allocation tables
+    # ---------------------------------------------------------------
+    "CREATE TABLE IF NOT EXISTS water_allocation_wro (
+       id INTEGER PRIMARY KEY, name TEXT UNIQUE,
+       rule_typ TEXT, cha_ob INTEGER DEFAULT 0
+     )",
+    "CREATE TABLE IF NOT EXISTS water_allocation_src_ob (
+       id INTEGER PRIMARY KEY, water_allocation_id INTEGER,
+       obj_typ TEXT DEFAULT 'unl', obj_id INTEGER DEFAULT 0,
+       limit_01 INTEGER DEFAULT 0, limit_02 INTEGER DEFAULT 0,
+       limit_03 INTEGER DEFAULT 0, limit_04 INTEGER DEFAULT 0,
+       limit_05 INTEGER DEFAULT 0, limit_06 INTEGER DEFAULT 0,
+       limit_07 INTEGER DEFAULT 0, limit_08 INTEGER DEFAULT 0,
+       limit_09 INTEGER DEFAULT 0, limit_10 INTEGER DEFAULT 0,
+       limit_11 INTEGER DEFAULT 0, limit_12 INTEGER DEFAULT 0,
+       description TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS water_allocation_dmd_ob (
+       id INTEGER PRIMARY KEY, water_allocation_id INTEGER,
+       obj_typ TEXT DEFAULT 'hru', obj_id INTEGER DEFAULT 0,
+       withdr TEXT, amount REAL, right TEXT,
+       treat_typ TEXT, treatment TEXT,
+       rcv_obj TEXT, rcv_dtl TEXT, rcv_obj_id INTEGER DEFAULT 0,
+       description TEXT
+     )",
+    "CREATE TABLE IF NOT EXISTS water_allocation_dmd_ob_src (
+       id INTEGER PRIMARY KEY, water_allocation_dmd_ob_id INTEGER,
+       src_id INTEGER, frac REAL, comp INTEGER DEFAULT 0
      )"
   )
   for (sql in sqls) {
