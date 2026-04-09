@@ -1277,7 +1277,7 @@ populate_from_gis <- function(con) {
 .populate_gis_standard <- function(con) {
   .gis_insert_routing_units(con)
   .gis_insert_om_water(con)
-  .gis_insert_channels(con)
+  # .gis_insert_channels(con)
   .gis_insert_channels_lte(con)
   .gis_insert_reservoirs(con)
   .gis_insert_recall(con)
