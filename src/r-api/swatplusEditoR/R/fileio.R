@@ -169,57 +169,27 @@ swat_write_table <- function(con, table_name, file_path,
   cols <- cols[!cols %in% ignored_cols]
 
   # Open file and write
-  f <- file(file_path, "w")
+  f <- tryCatch(file(file_path, "w"),
+                error = function(e) {
+                  warning(sprintf("Failed to write file '%s': %s",
+                                  basename(file_path), e$message))
+                  NULL
+                })
+  if (is.null(f)) return(invisible(NULL))
   on.exit(close(f))
 
-  # Meta line
-  writeLines(swat_meta_line(file_path, version, swat_version), f)
+  tryCatch({
+    # Meta line
+    writeLines(swat_meta_line(file_path, version, swat_version), f)
 
-  # Count line
-  if (write_count) {
-    writeLines(as.character(nrow(data)), f)
-  }
+    # Count line
+    if (write_count) {
+      writeLines(as.character(nrow(data)), f)
+    }
 
-  # Header line
-  header_parts <- vapply(cols, function(cn) {
-    display_name <- if (cn %in% names(col_names)) col_names[[cn]] else cn
-    align <- if (cn %in% names(col_aligns)) col_aligns[[cn]] else {
-      if (cn == "name" || cn == "file_name") "left" else "right"
-    }
-    pad <- if (cn %in% names(col_pads)) col_pads[[cn]] else NULL
-
-    ctype <- if (cn %in% names(col_types)) col_types[[cn]] else NULL
-    if (is.null(ctype)) {
-      # Infer type from data
-      sample_val <- data[[cn]][!is.na(data[[cn]])]
-      if (length(sample_val) == 0) {
-        ctype <- "str"
-      } else {
-        sample_val <- sample_val[1]
-        if (is.integer(sample_val)) ctype <- "int"
-        else if (is.numeric(sample_val)) ctype <- "num"
-        else ctype <- "str"
-      }
-    }
-    if (cn == "description" || cn == "desc") {
-      return(tolower(display_name))
-    }
-    if (is.null(pad)) {
-      pad <- switch(ctype,
-                    int = SWAT_INT_PAD,
-                    num = SWAT_NUM_PAD,
-                    bool = SWAT_CODE_PAD,
-                    SWAT_STR_PAD)
-    }
-    swat_string_pad(tolower(display_name), pad = pad, align = align)
-  }, character(1))
-  writeLines(paste0(header_parts, collapse = ""), f)
-
-  # Data rows
-  for (i in seq_len(nrow(data))) {
-    row_parts <- vapply(cols, function(cn) {
-      # Use sequential row number for id column (matching Python bug fix)
-      val <- if (cn == "id") i else data[[cn]][i]
+    # Header line
+    header_parts <- vapply(cols, function(cn) {
+      display_name <- if (cn %in% names(col_names)) col_names[[cn]] else cn
       align <- if (cn %in% names(col_aligns)) col_aligns[[cn]] else {
         if (cn == "name" || cn == "file_name") "left" else "right"
       }
@@ -227,18 +197,20 @@ swat_write_table <- function(con, table_name, file_path,
 
       ctype <- if (cn %in% names(col_types)) col_types[[cn]] else NULL
       if (is.null(ctype)) {
-        if (is.integer(val)) ctype <- "int"
-        else if (is.numeric(val)) ctype <- "num"
-        else if (is.logical(val)) ctype <- "bool"
-        else ctype <- "str"
+        # Infer type from data
+        sample_val <- data[[cn]][!is.na(data[[cn]])]
+        if (length(sample_val) == 0) {
+          ctype <- "str"
+        } else {
+          sample_val <- sample_val[1]
+          if (is.integer(sample_val)) ctype <- "int"
+          else if (is.numeric(sample_val)) ctype <- "num"
+          else ctype <- "str"
+        }
       }
-
       if (cn == "description" || cn == "desc") {
-        return(if (is.na(val) || is.null(val)) "" else as.character(val))
+        return(tolower(display_name))
       }
-
-      use_nzm <- cn %in% non_zero_min_cols
-
       if (is.null(pad)) {
         pad <- switch(ctype,
                       int = SWAT_INT_PAD,
@@ -246,15 +218,54 @@ swat_write_table <- function(con, table_name, file_path,
                       bool = SWAT_CODE_PAD,
                       SWAT_STR_PAD)
       }
-
-      switch(ctype,
-             int = swat_int_pad(val, pad = pad, align = align),
-             num = swat_num_pad(val, pad = pad, align = align, use_non_zero_min = use_nzm),
-             bool = swat_bool_pad(val, pad = pad, align = align),
-             swat_string_pad(val, pad = pad, align = align))
+      swat_string_pad(tolower(display_name), pad = pad, align = align)
     }, character(1))
-    writeLines(paste0(row_parts, collapse = ""), f)
-  }
+    writeLines(paste0(header_parts, collapse = ""), f)
+
+    # Data rows
+    for (i in seq_len(nrow(data))) {
+      row_parts <- vapply(cols, function(cn) {
+        # Use sequential row number for id column (matching Python bug fix)
+        val <- if (cn == "id") i else data[[cn]][i]
+        align <- if (cn %in% names(col_aligns)) col_aligns[[cn]] else {
+          if (cn == "name" || cn == "file_name") "left" else "right"
+        }
+        pad <- if (cn %in% names(col_pads)) col_pads[[cn]] else NULL
+
+        ctype <- if (cn %in% names(col_types)) col_types[[cn]] else NULL
+        if (is.null(ctype)) {
+          if (is.integer(val)) ctype <- "int"
+          else if (is.numeric(val)) ctype <- "num"
+          else if (is.logical(val)) ctype <- "bool"
+          else ctype <- "str"
+        }
+
+        if (cn == "description" || cn == "desc") {
+          return(if (is.na(val) || is.null(val)) "" else as.character(val))
+        }
+
+        use_nzm <- cn %in% non_zero_min_cols
+
+        if (is.null(pad)) {
+          pad <- switch(ctype,
+                        int = SWAT_INT_PAD,
+                        num = SWAT_NUM_PAD,
+                        bool = SWAT_CODE_PAD,
+                        SWAT_STR_PAD)
+        }
+
+        switch(ctype,
+               int = swat_int_pad(val, pad = pad, align = align),
+               num = swat_num_pad(val, pad = pad, align = align, use_non_zero_min = use_nzm),
+               bool = swat_bool_pad(val, pad = pad, align = align),
+               swat_string_pad(val, pad = pad, align = align))
+      }, character(1))
+      writeLines(paste0(row_parts, collapse = ""), f)
+    }
+  }, error = function(e) {
+    warning(sprintf("Failed to write file '%s' from table '%s': %s",
+                    basename(file_path), table_name, e$message))
+  })
 
   invisible(NULL)
 }

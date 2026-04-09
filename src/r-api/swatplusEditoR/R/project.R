@@ -1614,6 +1614,27 @@ populate_from_gis <- function(con) {
       DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
       error = function(e) 1L)
     
+    # If the existing hyd_sed_lte_cha table has the old 'wd_rto' column (present
+    # in projects created before the wd_rto -> sinu migration), drop it so that
+    # it is recreated with the current schema matching Python Hyd_sed_lte_cha.
+    if (.gis_count(con, "hyd_sed_lte_cha") == 0L) {
+      hydsed_cols <- tryCatch(DBI::dbListFields(con, "hyd_sed_lte_cha"),
+                              error = function(e) character(0))
+      if (length(hydsed_cols) > 0L && "wd_rto" %in% hydsed_cols) {
+        .gis_exec(con, "DROP TABLE IF EXISTS hyd_sed_lte_cha")
+        .gis_exec(con, paste0(
+          "CREATE TABLE IF NOT EXISTS hyd_sed_lte_cha (",
+          " id INTEGER PRIMARY KEY, name TEXT UNIQUE,",
+          " [order] TEXT,",
+          " wd REAL, dp REAL, slp REAL, len REAL, mann REAL, k REAL,",
+          " erod_fact REAL, cov_fact REAL, sinu REAL, eq_slp REAL,",
+          " d50 REAL, clay REAL, carbon REAL, dry_bd REAL,",
+          " side_slp REAL, bankfull_flo REAL, fps REAL, fpn REAL,",
+          " n_conc REAL, p_conc REAL, p_bio REAL, description TEXT",
+          ")"))
+      }
+    }
+
     n   <- nrow(chas)
     cnt <- max(chas$id)
     idx <- seq_len(n)
