@@ -1275,6 +1275,7 @@ populate_from_gis <- function(con) {
   .gis_insert_routing_units(con)
   .gis_insert_om_water(con)
   .gis_insert_channels(con)
+  .gis_insert_channels_lte(con)
   .gis_insert_reservoirs(con)
   .gis_insert_recall(con)
   .gis_insert_hrus(con)
@@ -1586,7 +1587,7 @@ populate_from_gis <- function(con) {
 #   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule)
 # --------------------------------------------------------------------------
 .gis_insert_channels_lte <- function(con) {
-  if (.gis_count(con, "channel_lte_cha") > 0L) return(invisible(NULL))
+  # if (.gis_count(con, "channel_lte_cha") > 0L) return(invisible(NULL))
   chas <- tryCatch(
     DBI::dbGetQuery(con, "SELECT * FROM gis_channels ORDER BY id"),
     error = function(e) NULL)
