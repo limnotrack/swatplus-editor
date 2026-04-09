@@ -1176,7 +1176,10 @@ populate_from_datasets <- function(con) {
   if (nrow(df) == 0L) return(invisible(NULL))
   tryCatch(
     DBI::dbWriteTable(con, tbl, df, append = TRUE, row.names = FALSE),
-    error = function(e) NULL)
+    error = function(e) {
+      warning(sprintf("Failed to write to table '%s': %s", tbl, e$message))
+      NULL
+    })
   invisible(NULL)
 }
 
