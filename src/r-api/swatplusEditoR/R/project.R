@@ -1401,182 +1401,183 @@ populate_from_gis <- function(con) {
 #   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule[, wst_id])
 # --------------------------------------------------------------------------
 .gis_insert_channels <- function(con) {
-  if (.gis_count(con, "channel_cha") > 0L) return(invisible(NULL))
-  chas <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT * FROM gis_channels ORDER BY id"),
-    error = function(e) NULL)
-  if (is.null(chas) || nrow(chas) == 0L) return(invisible(NULL))
-
-  # Ensure om_water_ini exists
-  .gis_insert_om_water(con)
-  om_id <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id FROM om_water_ini LIMIT 1")$id[1L],
-    error = function(e) 1L)
-
-  # One default initial_cha row
-  if (.gis_count(con, "initial_cha") == 0L) {
-    .gis_exec(con, paste0(
-      "INSERT INTO initial_cha (id, name, org_min_id) VALUES (1, 'initcha1', ",
-      om_id, ")"))
-  }
-  init_id <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
-    error = function(e) 1L)
-
-  # One default nutrients_cha row with physics-based defaults (mirrors Python Nutrients_cha model).
-  # If the table exists with the wrong schema (e.g. initial-concentration columns such as
-  # 'algae', 'cbod', 'dis_ox' instead of process-parameter columns like 'alg_stl'), drop it
-  # so that .gis_write_safe() recreates it with the correct column set.
-  if (.gis_count(con, "nutrients_cha") == 0L) {
-    nut_cols <- tryCatch(DBI::dbListFields(con, "nutrients_cha"),
-                         error = function(e) character(0))
-    if (length(nut_cols) > 0L && !"alg_stl" %in% nut_cols) {
-      .gis_exec(con, "DROP TABLE IF EXISTS nutrients_cha")
+  if (.gis_count(con, "channel_cha") == 0L) {
+    chas <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT * FROM gis_channels ORDER BY id"),
+      error = function(e) NULL)
+    if (is.null(chas) || nrow(chas) == 0L) return(invisible(NULL))
+    
+    # Ensure om_water_ini exists
+    .gis_insert_om_water(con)
+    om_id <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id FROM om_water_ini LIMIT 1")$id[1L],
+      error = function(e) 1L)
+    
+    # One default initial_cha row
+    if (.gis_count(con, "initial_cha") == 0L) {
+      .gis_exec(con, paste0(
+        "INSERT INTO initial_cha (id, name, org_min_id) VALUES (1, 'initcha1', ",
+        om_id, ")"))
     }
-    nuts_def <- data.frame(
-      id          = 1L,
-      name        = "nutcha1",
-      plt_n       = 0,
-      ptl_p       = 0,
-      alg_stl     = 1,
-      ben_disp    = 0.05,
-      ben_nh3n    = 0.5,
-      ptln_stl    = 0.05,
-      ptlp_stl    = 0.05,
-      cst_stl     = 2.5,
-      ben_cst     = 2.5,
-      cbn_bod_co  = 1.71,
-      air_rt      = 50,
-      cbn_bod_stl = 0.36,
-      ben_bod     = 2,
-      bact_die    = 2,
-      cst_decay   = 1.71,
-      nh3n_no2n   = 0.55,
-      no2n_no3n   = 1.1,
-      ptln_nh3n   = 0.21,
-      ptlp_solp   = 0.35,
-      q2e_lt      = 2L,
-      q2e_alg     = 2L,
-      chla_alg    = 50,
-      alg_n       = 0.08,
-      alg_p       = 0.015,
-      alg_o2_prod = 1.6,
-      alg_o2_resp = 2,
-      o2_nh3n     = 3.5,
-      o2_no2n     = 1.07,
-      alg_grow    = 2,
-      alg_resp    = 2.5,
-      slr_act     = 0.3,
-      lt_co       = 0.75,
-      const_n     = 0.02,
-      const_p     = 0.025,
-      lt_nonalg   = 1,
-      alg_shd_l   = 0.03,
-      alg_shd_nl  = 0.054,
-      nh3_pref    = 0.5,
-      description = "",
+    init_id <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
+      error = function(e) 1L)
+    
+    # One default nutrients_cha row with physics-based defaults (mirrors Python Nutrients_cha model).
+    # If the table exists with the wrong schema (e.g. initial-concentration columns such as
+    # 'algae', 'cbod', 'dis_ox' instead of process-parameter columns like 'alg_stl'), drop it
+    # so that .gis_write_safe() recreates it with the correct column set.
+    if (.gis_count(con, "nutrients_cha") == 0L) {
+      nut_cols <- tryCatch(DBI::dbListFields(con, "nutrients_cha"),
+                           error = function(e) character(0))
+      if (length(nut_cols) > 0L && !"alg_stl" %in% nut_cols) {
+        .gis_exec(con, "DROP TABLE IF EXISTS nutrients_cha")
+      }
+      nuts_def <- data.frame(
+        id          = 1L,
+        name        = "nutcha1",
+        plt_n       = 0,
+        ptl_p       = 0,
+        alg_stl     = 1,
+        ben_disp    = 0.05,
+        ben_nh3n    = 0.5,
+        ptln_stl    = 0.05,
+        ptlp_stl    = 0.05,
+        cst_stl     = 2.5,
+        ben_cst     = 2.5,
+        cbn_bod_co  = 1.71,
+        air_rt      = 50,
+        cbn_bod_stl = 0.36,
+        ben_bod     = 2,
+        bact_die    = 2,
+        cst_decay   = 1.71,
+        nh3n_no2n   = 0.55,
+        no2n_no3n   = 1.1,
+        ptln_nh3n   = 0.21,
+        ptlp_solp   = 0.35,
+        q2e_lt      = 2L,
+        q2e_alg     = 2L,
+        chla_alg    = 50,
+        alg_n       = 0.08,
+        alg_p       = 0.015,
+        alg_o2_prod = 1.6,
+        alg_o2_resp = 2,
+        o2_nh3n     = 3.5,
+        o2_no2n     = 1.07,
+        alg_grow    = 2,
+        alg_resp    = 2.5,
+        slr_act     = 0.3,
+        lt_co       = 0.75,
+        const_n     = 0.02,
+        const_p     = 0.025,
+        lt_nonalg   = 1,
+        alg_shd_l   = 0.03,
+        alg_shd_nl  = 0.054,
+        nh3_pref    = 0.5,
+        description = "",
+        stringsAsFactors = FALSE)
+      .gis_write_safe(con, "nutrients_cha", nuts_def)
+    }
+    nut_id <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id FROM nutrients_cha LIMIT 1")$id[1L],
+      error = function(e) 1L)
+    
+    n   <- nrow(chas)
+    cnt <- max(chas$id)
+    idx <- seq_len(n)
+    
+    # Standard hydrology_cha: per-channel geometry-based parameters.
+    # Extra columns (beyond wd/dp/slp/len/mann/k) use .gis_write_safe() so they
+    # are silently dropped when the DB schema does not have them (e.g. in tests).
+    hyds <- data.frame(
+      id        = idx,
+      name      = mapply(.gis_name, "hyd", chas$id, cnt),
+      wd        = pmax(chas$wid2, 0.1),
+      dp        = pmax(chas$dep2, 0.1),
+      slp       = pmax(chas$slo2, 0.0001),
+      len       = pmax(chas$len2, 0.001),
+      mann      = 0.05,
+      k         = 1.0,
+      erod_fact = 0.02,
+      cov_fact  = 0.0,
+      hc_cov    = 0.0,
+      eq_slp    = 0.0,
+      d50       = 0.1,
+      clay      = 0.1,
+      carbon    = 0.01,
+      dry_bd    = 1.2,
+      side_slp  = 2.0,
+      bed_load  = 0.5,
+      fps       = 0.0,
+      fpn       = 0.0,
+      n_conc    = 0.0,
+      p_conc    = 0.0,
+      p_bio     = 0.0,
       stringsAsFactors = FALSE)
-    .gis_write_safe(con, "nutrients_cha", nuts_def)
+    
+    # One sediment_cha row per channel (not a single shared row).
+    seds <- data.frame(
+      id   = idx,
+      name = mapply(.gis_name, "sed", chas$id, cnt),
+      stringsAsFactors = FALSE)
+    
+    # Standard channel_cha: references hydrology, sediment, nutrients, initial
+    chan_chas <- data.frame(
+      id      = idx,
+      name    = mapply(.gis_name, "cha", chas$id, cnt),
+      init_id = init_id,
+      hyd_id  = idx,
+      sed_id  = idx,
+      nut_id  = nut_id,
+      stringsAsFactors = FALSE)
+    
+    # chandeg_con: channel connections (same structure for standard and LTE)
+    # Fall back to subbasin lat/lon/elev when channel midlat/midlon are 0 or NA.
+    subs <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id, lat, lon, elev FROM gis_subbasins ORDER BY id"),
+      error = function(e) data.frame(id = integer(0), lat = numeric(0),
+                                     lon = numeric(0), elev = numeric(0)))
+    sub_lat  <- if (nrow(subs) > 0L) setNames(subs$lat,  as.character(subs$id)) else c()
+    sub_lon  <- if (nrow(subs) > 0L) setNames(subs$lon,  as.character(subs$id)) else c()
+    sub_elev <- if (nrow(subs) > 0L) setNames(subs$elev, as.character(subs$id)) else c()
+    
+    lat  <- ifelse(!is.na(chas$midlat)  & chas$midlat  != 0,
+                   chas$midlat, sub_lat[as.character(chas$subbasin)])
+    lon  <- ifelse(!is.na(chas$midlon)  & chas$midlon  != 0,
+                   chas$midlon, sub_lon[as.character(chas$subbasin)])
+    elev <- ifelse(!is.na(chas$elevmin) & chas$elevmin != 0,
+                   chas$elevmin, sub_elev[as.character(chas$subbasin)])
+    
+    chan_cons <- data.frame(
+      id     = idx,
+      name   = mapply(.gis_name, "cha", chas$id, cnt),
+      gis_id = chas$id,
+      lat    = lat,
+      lon    = lon,
+      elev   = elev,
+      area   = chas$areac,
+      ovfl   = 0L,
+      rule   = 0L,
+      stringsAsFactors = FALSE)
+    
+    # Assign nearest weather station to each channel
+    wst_rows <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id, lat, lon FROM weather_sta_cli"),
+      error = function(e) data.frame(id = integer(0), lat = numeric(0),
+                                     lon = numeric(0)))
+    if (nrow(wst_rows) > 0L) {
+      chan_cons$wst_id <- vapply(seq_len(nrow(chan_cons)), function(i) {
+        d2 <- (wst_rows$lat - chan_cons$lat[i])^2 +
+          (wst_rows$lon - chan_cons$lon[i])^2
+        wst_rows$id[which.min(d2)]
+      }, integer(1L))
+    }
+    
+    .gis_write_safe(con, "hydrology_cha",  hyds)
+    .gis_write_safe(con, "sediment_cha",   seds)
+    .gis_write(con, "channel_cha",    chan_chas)
+    .gis_write_safe(con, "chandeg_con",    chan_cons)
   }
-  nut_id <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id FROM nutrients_cha LIMIT 1")$id[1L],
-    error = function(e) 1L)
-
-  n   <- nrow(chas)
-  cnt <- max(chas$id)
-  idx <- seq_len(n)
-
-  # Standard hydrology_cha: per-channel geometry-based parameters.
-  # Extra columns (beyond wd/dp/slp/len/mann/k) use .gis_write_safe() so they
-  # are silently dropped when the DB schema does not have them (e.g. in tests).
-  hyds <- data.frame(
-    id        = idx,
-    name      = mapply(.gis_name, "hyd", chas$id, cnt),
-    wd        = pmax(chas$wid2, 0.1),
-    dp        = pmax(chas$dep2, 0.1),
-    slp       = pmax(chas$slo2, 0.0001),
-    len       = pmax(chas$len2, 0.001),
-    mann      = 0.05,
-    k         = 1.0,
-    erod_fact = 0.02,
-    cov_fact  = 0.0,
-    hc_cov    = 0.0,
-    eq_slp    = 0.0,
-    d50       = 0.1,
-    clay      = 0.1,
-    carbon    = 0.01,
-    dry_bd    = 1.2,
-    side_slp  = 2.0,
-    bed_load  = 0.5,
-    fps       = 0.0,
-    fpn       = 0.0,
-    n_conc    = 0.0,
-    p_conc    = 0.0,
-    p_bio     = 0.0,
-    stringsAsFactors = FALSE)
-
-  # One sediment_cha row per channel (not a single shared row).
-  seds <- data.frame(
-    id   = idx,
-    name = mapply(.gis_name, "sed", chas$id, cnt),
-    stringsAsFactors = FALSE)
-
-  # Standard channel_cha: references hydrology, sediment, nutrients, initial
-  chan_chas <- data.frame(
-    id      = idx,
-    name    = mapply(.gis_name, "cha", chas$id, cnt),
-    init_id = init_id,
-    hyd_id  = idx,
-    sed_id  = idx,
-    nut_id  = nut_id,
-    stringsAsFactors = FALSE)
-
-  # chandeg_con: channel connections (same structure for standard and LTE)
-  # Fall back to subbasin lat/lon/elev when channel midlat/midlon are 0 or NA.
-  subs <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id, lat, lon, elev FROM gis_subbasins ORDER BY id"),
-    error = function(e) data.frame(id = integer(0), lat = numeric(0),
-                                   lon = numeric(0), elev = numeric(0)))
-  sub_lat  <- if (nrow(subs) > 0L) setNames(subs$lat,  as.character(subs$id)) else c()
-  sub_lon  <- if (nrow(subs) > 0L) setNames(subs$lon,  as.character(subs$id)) else c()
-  sub_elev <- if (nrow(subs) > 0L) setNames(subs$elev, as.character(subs$id)) else c()
-
-  lat  <- ifelse(!is.na(chas$midlat)  & chas$midlat  != 0,
-                 chas$midlat, sub_lat[as.character(chas$subbasin)])
-  lon  <- ifelse(!is.na(chas$midlon)  & chas$midlon  != 0,
-                 chas$midlon, sub_lon[as.character(chas$subbasin)])
-  elev <- ifelse(!is.na(chas$elevmin) & chas$elevmin != 0,
-                 chas$elevmin, sub_elev[as.character(chas$subbasin)])
-
-  chan_cons <- data.frame(
-    id     = idx,
-    name   = mapply(.gis_name, "cha", chas$id, cnt),
-    gis_id = chas$id,
-    lat    = lat,
-    lon    = lon,
-    elev   = elev,
-    area   = chas$areac,
-    ovfl   = 0L,
-    rule   = 0L,
-    stringsAsFactors = FALSE)
-
-  # Assign nearest weather station to each channel
-  wst_rows <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id, lat, lon FROM weather_sta_cli"),
-    error = function(e) data.frame(id = integer(0), lat = numeric(0),
-                                   lon = numeric(0)))
-  if (nrow(wst_rows) > 0L) {
-    chan_cons$wst_id <- vapply(seq_len(nrow(chan_cons)), function(i) {
-      d2 <- (wst_rows$lat - chan_cons$lat[i])^2 +
-            (wst_rows$lon - chan_cons$lon[i])^2
-      wst_rows$id[which.min(d2)]
-    }, integer(1L))
-  }
-
-  .gis_write_safe(con, "hydrology_cha",  hyds)
-  .gis_write_safe(con, "sediment_cha",   seds)
-  .gis_write(con, "channel_cha",    chan_chas)
-  .gis_write_safe(con, "chandeg_con",    chan_cons)
   invisible(NULL)
 }
 
@@ -1591,111 +1592,112 @@ populate_from_gis <- function(con) {
 #   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule)
 # --------------------------------------------------------------------------
 .gis_insert_channels_lte <- function(con) {
-  # if (.gis_count(con, "channel_lte_cha") > 0L) return(invisible(NULL))
-  chas <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT * FROM gis_channels ORDER BY id"),
-    error = function(e) NULL)
-  if (is.null(chas) || nrow(chas) == 0L) return(invisible(NULL))
-
-  # Ensure om_water_ini exists
-  .gis_insert_om_water(con)
-  om_id <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id FROM om_water_ini LIMIT 1")$id[1L],
-    error = function(e) 1L)
-
-  # One default initial_cha row
-  if (.gis_count(con, "initial_cha") == 0L) {
-    .gis_exec(con, paste0(
-      "INSERT INTO initial_cha (id, name, org_min_id) VALUES (1, 'initcha1', ",
-      om_id, ")"))
+  if (.gis_count(con, "channel_lte_cha") == 0L) {
+    chas <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT * FROM gis_channels ORDER BY id"),
+      error = function(e) NULL)
+    if (is.null(chas) || nrow(chas) == 0L) return(invisible(NULL))
+    
+    # Ensure om_water_ini exists
+    .gis_insert_om_water(con)
+    om_id <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id FROM om_water_ini LIMIT 1")$id[1L],
+      error = function(e) 1L)
+    
+    # One default initial_cha row
+    if (.gis_count(con, "initial_cha") == 0L) {
+      .gis_exec(con, paste0(
+        "INSERT INTO initial_cha (id, name, org_min_id) VALUES (1, 'initcha1', ",
+        om_id, ")"))
+    }
+    init_id <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
+      error = function(e) 1L)
+    
+    n   <- nrow(chas)
+    cnt <- max(chas$id)
+    idx <- seq_len(n)
+    
+    hyds <- data.frame(
+      id           = idx,
+      name         = mapply(.gis_name, "hyd", chas$id, cnt),
+      order        = if ("strahler" %in% names(chas)) as.character(chas$strahler) else "1",
+      wd           = pmax(chas$wid2, 0.1),
+      dp           = pmax(chas$dep2, 0.1),
+      slp          = pmax(chas$slo2 / 100, 0.0001),
+      len          = pmax(chas$len2 / 1000, 0.001),
+      mann         = 0.05,
+      k            = 1.0,
+      erod_fact    = 0.01,
+      cov_fact     = 0.005,
+      sinu         = 1.05,
+      eq_slp       = 0.001,
+      d50          = 12.0,
+      clay         = 50.0,
+      carbon       = 0.04,
+      dry_bd       = 1.0,
+      side_slp     = 0.5,
+      bankfull_flo = 0.5,
+      fps          = 0.00001,
+      fpn          = 0.1,
+      n_conc       = 0.0,
+      p_conc       = 0.0,
+      p_bio        = 0.0,
+      stringsAsFactors = FALSE)
+    
+    chan_ltes <- data.frame(
+      id      = idx,
+      name    = mapply(.gis_name, "cha", chas$id, cnt),
+      hyd_id  = idx,
+      init_id = init_id,
+      stringsAsFactors = FALSE)
+    
+    # Fall back to subbasin lat/lon/elev when channel midlat/midlon are 0 or NA.
+    subs <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id, lat, lon, elev FROM gis_subbasins ORDER BY id"),
+      error = function(e) data.frame(id = integer(0), lat = numeric(0),
+                                     lon = numeric(0), elev = numeric(0)))
+    sub_lat  <- if (nrow(subs) > 0L) setNames(subs$lat,  as.character(subs$id)) else c()
+    sub_lon  <- if (nrow(subs) > 0L) setNames(subs$lon,  as.character(subs$id)) else c()
+    sub_elev <- if (nrow(subs) > 0L) setNames(subs$elev, as.character(subs$id)) else c()
+    
+    lat  <- ifelse(!is.na(chas$midlat)  & chas$midlat  != 0,
+                   chas$midlat, sub_lat[as.character(chas$subbasin)])
+    lon  <- ifelse(!is.na(chas$midlon)  & chas$midlon  != 0,
+                   chas$midlon, sub_lon[as.character(chas$subbasin)])
+    elev <- ifelse(!is.na(chas$elevmin) & chas$elevmin != 0,
+                   chas$elevmin, sub_elev[as.character(chas$subbasin)])
+    
+    chan_cons <- data.frame(
+      id     = idx,
+      name   = mapply(.gis_name, "cha", chas$id, cnt),
+      gis_id = chas$id,
+      lat    = lat,
+      lon    = lon,
+      elev   = elev,
+      area   = chas$areac,
+      ovfl   = 0L,
+      rule   = 0L,
+      stringsAsFactors = FALSE)
+    
+    # Assign nearest weather station to each channel
+    wst_rows <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT id, lat, lon FROM weather_sta_cli"),
+      error = function(e) data.frame(id = integer(0), lat = numeric(0),
+                                     lon = numeric(0)))
+    if (nrow(wst_rows) > 0L) {
+      chan_cons$wst_id <- vapply(seq_len(nrow(chan_cons)), function(i) {
+        d2 <- (wst_rows$lat - chan_cons$lat[i])^2 +
+          (wst_rows$lon - chan_cons$lon[i])^2
+        wst_rows$id[which.min(d2)]
+      }, integer(1L))
+    }
+    
+    .gis_write(con, "hyd_sed_lte_cha",  hyds)
+    .gis_write(con, "channel_lte_cha",  chan_ltes)
+    .gis_write_safe(con, "chandeg_con",      chan_cons)
+    invisible(NULL)
   }
-  init_id <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
-    error = function(e) 1L)
-
-  n   <- nrow(chas)
-  cnt <- max(chas$id)
-  idx <- seq_len(n)
-
-  hyds <- data.frame(
-    id           = idx,
-    name         = mapply(.gis_name, "hyd", chas$id, cnt),
-    order        = if ("strahler" %in% names(chas)) as.character(chas$strahler) else "1",
-    wd           = pmax(chas$wid2, 0.1),
-    dp           = pmax(chas$dep2, 0.1),
-    slp          = pmax(chas$slo2 / 100, 0.0001),
-    len          = pmax(chas$len2 / 1000, 0.001),
-    mann         = 0.05,
-    k            = 1.0,
-    erod_fact    = 0.01,
-    cov_fact     = 0.005,
-    sinu         = 1.05,
-    eq_slp       = 0.001,
-    d50          = 12.0,
-    clay         = 50.0,
-    carbon       = 0.04,
-    dry_bd       = 1.0,
-    side_slp     = 0.5,
-    bankfull_flo = 0.5,
-    fps          = 0.00001,
-    fpn          = 0.1,
-    n_conc       = 0.0,
-    p_conc       = 0.0,
-    p_bio        = 0.0,
-    stringsAsFactors = FALSE)
-
-  chan_ltes <- data.frame(
-    id      = idx,
-    name    = mapply(.gis_name, "cha", chas$id, cnt),
-    hyd_id  = idx,
-    init_id = init_id,
-    stringsAsFactors = FALSE)
-
-  # Fall back to subbasin lat/lon/elev when channel midlat/midlon are 0 or NA.
-  subs <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id, lat, lon, elev FROM gis_subbasins ORDER BY id"),
-    error = function(e) data.frame(id = integer(0), lat = numeric(0),
-                                   lon = numeric(0), elev = numeric(0)))
-  sub_lat  <- if (nrow(subs) > 0L) setNames(subs$lat,  as.character(subs$id)) else c()
-  sub_lon  <- if (nrow(subs) > 0L) setNames(subs$lon,  as.character(subs$id)) else c()
-  sub_elev <- if (nrow(subs) > 0L) setNames(subs$elev, as.character(subs$id)) else c()
-
-  lat  <- ifelse(!is.na(chas$midlat)  & chas$midlat  != 0,
-                 chas$midlat, sub_lat[as.character(chas$subbasin)])
-  lon  <- ifelse(!is.na(chas$midlon)  & chas$midlon  != 0,
-                 chas$midlon, sub_lon[as.character(chas$subbasin)])
-  elev <- ifelse(!is.na(chas$elevmin) & chas$elevmin != 0,
-                 chas$elevmin, sub_elev[as.character(chas$subbasin)])
-
-  chan_cons <- data.frame(
-    id     = idx,
-    name   = mapply(.gis_name, "cha", chas$id, cnt),
-    gis_id = chas$id,
-    lat    = lat,
-    lon    = lon,
-    elev   = elev,
-    area   = chas$areac,
-    ovfl   = 0L,
-    rule   = 0L,
-    stringsAsFactors = FALSE)
-
-  # Assign nearest weather station to each channel
-  wst_rows <- tryCatch(
-    DBI::dbGetQuery(con, "SELECT id, lat, lon FROM weather_sta_cli"),
-    error = function(e) data.frame(id = integer(0), lat = numeric(0),
-                                   lon = numeric(0)))
-  if (nrow(wst_rows) > 0L) {
-    chan_cons$wst_id <- vapply(seq_len(nrow(chan_cons)), function(i) {
-      d2 <- (wst_rows$lat - chan_cons$lat[i])^2 +
-            (wst_rows$lon - chan_cons$lon[i])^2
-      wst_rows$id[which.min(d2)]
-    }, integer(1L))
-  }
-
-  .gis_write(con, "hyd_sed_lte_cha",  hyds)
-  .gis_write(con, "channel_lte_cha",  chan_ltes)
-  .gis_write_safe(con, "chandeg_con",      chan_cons)
-  invisible(NULL)
 }
 
 # --------------------------------------------------------------------------
