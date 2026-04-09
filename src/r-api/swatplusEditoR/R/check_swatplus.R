@@ -644,23 +644,44 @@ check_swatplus <- function(project, output_dir) {
   cat("\n-- 17. Landscape unit element completeness (ls_unit.ele) --\n")
   
   ls_ele_file <- read_swat("ls_unit.ele", output_dir)
-  
+      # ls_unit.def row count should match unique LSU count
+    ls_def_file <- read_swat("ls_unit.def", output_dir)
+
   if (!is.null(ls_ele_file) && !is.null(hru_data)) {
-    n_ls_eles <- nrow(ls_ele_file)
+    
+    # Row count should match HRU count (one row per HRU)
+    n_ls_eles       <- nrow(ls_ele_file)
     n_hrus_expected <- nrow(hru_data)
     
     if (n_ls_eles != n_hrus_expected) {
       msg <- sprintf(
-        "  [WARN] ls_unit.ele has %d entries but expected %d (one per HRU)",
+        "  [WARN] ls_unit.ele has %d rows but expected %d (one per HRU)",
         n_ls_eles, n_hrus_expected)
       cat(msg, "\n")
       issues[[length(issues) + 1]] <- msg
     } else {
-      cat(sprintf("  [OK] ls_unit.ele has %d entries matching %d HRUs\n",
-                  n_ls_eles, n_hrus_expected))
+      cat(sprintf("  [OK] ls_unit.ele has %d rows matching HRU count\n",
+                  n_ls_eles))
     }
     
-    # Check bsn_frac sums to ~1.0
+    # Unique ls_unit_def_id count should match subbasin/LSU count
+    if ("ls_unit_def_id" %in% names(ls_ele_file)) {
+      n_lsu_ids       <- length(unique(ls_ele_file$ls_unit_def_id))
+      n_lsus_expected <- length(unique(hru_data$id))
+      
+      if (n_lsu_ids != n_lsus_expected) {
+        msg <- sprintf(
+          "  [WARN] ls_unit.ele has %d unique ls_unit_def_ids but expected %d LSUs",
+          n_lsu_ids, n_lsus_expected)
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] %d unique LSU IDs matching subbasin count\n",
+                    n_lsu_ids))
+      }
+    }
+    
+    # bsn_frac should sum to ~1.0 across all HRU rows
     if ("bsn_frac" %in% names(ls_ele_file)) {
       bsn_sum <- sum(ls_ele_file$bsn_frac, na.rm = TRUE)
       if (abs(bsn_sum - 1.0) > 0.01) {
@@ -669,7 +690,38 @@ check_swatplus <- function(project, output_dir) {
         cat(msg, "\n")
         issues[[length(issues) + 1]] <- msg
       } else {
-        cat(sprintf("  [OK] ls_unit.ele bsn_frac sums to %.4f\n", bsn_sum))
+        cat(sprintf("  [OK] bsn_frac sums to %.4f across all HRUs\n", bsn_sum))
+      }
+    }
+    
+    # sub_frac should sum to ~1.0 per LSU
+    if (all(c("sub_frac", "ls_unit_def_id") %in% names(ls_ele_file))) {
+      sub_sums <- tapply(ls_ele_file$sub_frac,
+                         ls_ele_file$ls_unit_def_id, sum)
+      bad_subs <- sum(abs(sub_sums - 1.0) > 0.01)
+      if (bad_subs > 0) {
+        msg <- sprintf(
+          "  [WARN] %d LSU(s) have sub_frac not summing to 1.0 (range: %.4f - %.4f)",
+          bad_subs, min(sub_sums), max(sub_sums))
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] sub_frac sums to ~1.0 in all %d LSUs\n",
+                    length(sub_sums)))
+      }
+    }
+    
+    if (!is.null(ls_def_file)) {
+      n_lsus_expected <- length(unique(hru_data$subbasin))
+      if (nrow(ls_def_file) != n_lsus_expected) {
+        msg <- sprintf(
+          "  [WARN] ls_unit.def has %d rows but expected %d LSUs",
+          nrow(ls_def_file), n_lsus_expected)
+        cat(msg, "\n")
+        issues[[length(issues) + 1]] <- msg
+      } else {
+        cat(sprintf("  [OK] ls_unit.def has %d rows matching LSU count\n",
+                    nrow(ls_def_file)))
       }
     }
   }
