@@ -554,7 +554,10 @@ write_direct <- function(project, output_dir, swat_version = "60",
 write_section_file <- function(con, file_name, output_dir, v, sv,
                                writer = NULL) {
   if (is.null(file_name) || trimws(file_name) == "null" ||
-      trimws(file_name) == "") return(invisible(NULL))
+      trimws(file_name) == "") {
+    warning("Skipping file with name '", file_name, "'")
+    return(invisible(NULL))
+  }
   file_name <- trimws(file_name)
   writer(con, output_dir, v, sv, file_name = file_name)
 }
@@ -1388,7 +1391,10 @@ write_connect_file <- function(con, con_tbl, con_out_tbl, elem_name,
     tryCatch(query_db(con, paste0("SELECT * FROM ", con_tbl, " ORDER BY id")),
              error = function(e2) data.frame())
   })
-  if (nrow(cons) == 0) return(invisible(NULL))
+  if (nrow(cons) == 0) {
+    warning("No data found in table ", con_tbl, " for writing ", basename(file_path))
+    return(invisible(NULL))
+  }
   
   f <- file(file_path, "w")
   on.exit(close(f))
