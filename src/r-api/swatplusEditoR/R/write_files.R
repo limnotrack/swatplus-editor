@@ -1813,12 +1813,12 @@ get_file_cio_conditions <- function(con, is_lte = FALSE, is_netcdf = FALSE) {
       sc("outlet_con") > 0, sc("chandeg_con") > 0),
     channel = list(
       sc("initial_cha") > 0,
-      !is_lte && sc("channel_cha") > 0,       # standard only
-      !is_lte && sc("hydrology_cha") > 0,     # standard only
-      !is_lte && sc("sediment_cha") > 0,      # standard only
+      FALSE, #!is_lte && sc("channel_cha") > 0,       # standard only
+      FALSE, #!is_lte && sc("hydrology_cha") > 0,     # standard only
+      FALSE, #!is_lte && sc("sediment_cha") > 0,      # standard only
       sc("nutrients_cha") > 0,
-      is_lte && sc("channel_lte_cha") > 0,   # lte only
-      is_lte && sc("hyd_sed_lte_cha") > 0,   # lte only
+      sc("channel_lte_cha") > 0,   # lte only
+      sc("hyd_sed_lte_cha") > 0,   # lte only
       sc("temperature_cha") > 0),
     reservoir = list(
       sc("initial_res") > 0, sc("reservoir_res") > 0,
