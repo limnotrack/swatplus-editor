@@ -1584,8 +1584,9 @@ populate_from_gis <- function(con) {
 # Step 3b: LTE channels from gis_channels (used for LTE mode only)
 # Schema:
 #   initial_cha:    (id, name, org_min_id)
-#   hyd_sed_lte_cha:(id, name, wd, dp, slp, len, mann, k, cov_fact, wd_rto,
-#                    eq_slp, d50)
+#   hyd_sed_lte_cha:(id, name, order, wd, dp, slp, len, mann, k, erod_fact,
+#                    cov_fact, sinu, eq_slp, d50, clay, carbon, dry_bd,
+#                    side_slp, bankfull_flo, fps, fpn, n_conc, p_conc, p_bio)
 #   channel_lte_cha:(id, name, hyd_id, init_id)
 #   chandeg_con:    (id, name, gis_id, area, lat, lon, elev, ovfl, rule)
 # --------------------------------------------------------------------------
@@ -1617,18 +1618,30 @@ populate_from_gis <- function(con) {
   idx <- seq_len(n)
 
   hyds <- data.frame(
-    id       = idx,
-    name     = mapply(.gis_name, "hyd", chas$id, cnt),
-    wd       = pmax(chas$wid2, 0.1),
-    dp       = pmax(chas$dep2, 0.1),
-    slp      = pmax(chas$slo2 / 100, 0.0001),
-    len      = pmax(chas$len2 / 1000, 0.001),
-    mann     = 0.05,
-    k        = 1.0,
-    cov_fact = 0.005,
-    wd_rto   = 10.0,
-    eq_slp   = 0.001,
-    d50      = 12.0,
+    id           = idx,
+    name         = mapply(.gis_name, "hyd", chas$id, cnt),
+    order        = if ("strahler" %in% names(chas)) as.character(chas$strahler) else "1",
+    wd           = pmax(chas$wid2, 0.1),
+    dp           = pmax(chas$dep2, 0.1),
+    slp          = pmax(chas$slo2 / 100, 0.0001),
+    len          = pmax(chas$len2 / 1000, 0.001),
+    mann         = 0.05,
+    k            = 1.0,
+    erod_fact    = 0.01,
+    cov_fact     = 0.005,
+    sinu         = 1.05,
+    eq_slp       = 0.001,
+    d50          = 12.0,
+    clay         = 50.0,
+    carbon       = 0.04,
+    dry_bd       = 1.0,
+    side_slp     = 0.5,
+    bankfull_flo = 0.5,
+    fps          = 0.00001,
+    fpn          = 0.1,
+    n_conc       = 0.0,
+    p_conc       = 0.0,
+    p_bio        = 0.0,
     stringsAsFactors = FALSE)
 
   chan_ltes <- data.frame(
