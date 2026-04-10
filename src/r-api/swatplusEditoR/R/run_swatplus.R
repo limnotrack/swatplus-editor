@@ -115,7 +115,7 @@ run_swatplus <- function(swat_exe    = swatplus_exe(),
       call. = FALSE
     )
   } else if (verbose) {
-    emit_progress(sprintf(
+    message(sprintf(
       "SWAT+ completed successfully in %.1f s.", elapsed
     ))
   }
