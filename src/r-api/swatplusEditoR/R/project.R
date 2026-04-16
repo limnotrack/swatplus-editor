@@ -2696,44 +2696,11 @@ populate_from_gis <- function(con) {
     }
 
     if (.gis_count(con, "rout_unit_con_out") == 0L) {
-      # Build subbasin -> channel gis_id lookup
-      gis_cha <- tryCatch(
-        DBI::dbGetQuery(con, "SELECT id AS cha_gis_id, subbasin FROM gis_channels"),
-        error = function(e) data.frame(cha_gis_id = integer(0), subbasin = integer(0)))
-      sub_to_cha <- if (nrow(gis_cha) > 0L)
-        setNames(gis_cha$cha_gis_id, as.character(gis_cha$subbasin))
-      else c()
-      
-      # Each RTU routes to the channel in its own subbasin
-      rtu_rows <- route_src[tolower(route_src$sourcecat) %in% c("lsu", "sub"), , drop = FALSE]
-      if (nrow(rtu_rows) > 0L && nrow(rtu_map) > 0L) {
-        result <- list()
-        for (k in seq_len(nrow(rtu_rows))) {
-          r <- rtu_rows[k, ]
-          src_id <- rtu_map$id[match(r$sourceid, rtu_map$gis_id)]
-          if (is.na(src_id)) next
-          
-          # Route to the channel in this subbasin
-          cha_gis_id <- sub_to_cha[as.character(r$sourceid)]
-          if (is.na(cha_gis_id)) next
-          cha_con_id <- cha_map$id[match(cha_gis_id, cha_map$gis_id)]
-          if (is.na(cha_con_id)) next
-          
-          hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ) && nzchar(r$hyd_typ))
-            r$hyd_typ else "tot"
-          
-          result[[length(result) + 1L]] <- data.frame(
-            rout_unit_con_id = src_id,
-            order_id = 1L,
-            obj_typ = "sdc",
-            obj_id = cha_con_id,
-            hyd_typ = hyd,
-            frac = 1.0,
-            stringsAsFactors = FALSE)
-        }
-        if (length(result) > 0L)
-          .gis_write(con, "rout_unit_con_out", do.call(rbind, result))
-      }
+      # Use the general .build_con_out() which follows PT chains and handles all
+      # sinkcat types (sdc, aqu, res, etc.), mirroring Python get_connections()
+      # called with [RouteCat.LSU] in import_gis.py insert_connections().
+      df <- .build_con_out(c("lsu", "sub"), "rout_unit_con_id", rtu_map)
+      if (!is.null(df)) .gis_write(con, "rout_unit_con_out", df)
     }
 
     if (.gis_count(con, "chandeg_con_out") == 0L) {
