@@ -473,7 +473,10 @@ get_wgn_cfsr_world <- function(project, stations, wgn_db) {
 #'
 #' Updates the \code{wst_id} foreign key on connection tables (e.g.,
 #' \code{hru_con}, \code{aquifer_con}) to reference the closest weather
-#' station by lat/lon coordinates.
+#' station by lat/lon coordinates. Also matches \code{wgn_id} on
+#' \code{weather_sta_cli} to the nearest weather generator station.
+#'
+#' Called automatically by \code{\link{add_weather_stations}}.
 #'
 #' @param project List. A SWAT+ project object with \code{db_file}.
 #' @param tables Character vector. Connection tables to update.
@@ -481,17 +484,39 @@ get_wgn_cfsr_world <- function(project, stations, wgn_db) {
 #' @return The project object (invisibly).
 #' @export
 match_weather_stations <- function(project,
-                                   tables = c("hru_con", "aquifer_con",
+                                   tables = c("aquifer_con", "channel_con",
                                               "chandeg_con", "rout_unit_con",
-                                              "reservoir_con")) {
+                                              "reservoir_con", "recall_con",
+                                              "exco_con", "hru_con",
+                                              "hru_lte_con")) {
   validate_project(project)
   con <- open_project_db(project$db_file)
   on.exit(close_db(con))
 
+  match_weather_stations_db(con, tables)
+  invisible(project)
+}
+
+#' Match weather stations to spatial objects (database-level)
+#'
+#' Internal workhorse called by \code{\link{match_weather_stations}} and by
+#' \code{write_direct()} during file writing.  Operates on an already-open
+#' database connection so it can be used inside \code{write_config_files()}
+#' after \code{populate_from_gis()} has created all \code{_con} tables.
+#'
+#' @param con DBI database connection.
+#' @param tables Character vector of connection tables to update.
+#' @keywords internal
+match_weather_stations_db <- function(con,
+                                      tables = c("aquifer_con", "channel_con",
+                                                  "chandeg_con", "rout_unit_con",
+                                                  "reservoir_con", "recall_con",
+                                                  "exco_con", "hru_con",
+                                                  "hru_lte_con")) {
+  if (!has_data(con, "weather_sta_cli")) return(invisible(NULL))
+
   stations <- query_db(con, "SELECT id, lat, lon FROM weather_sta_cli")
-  if (nrow(stations) == 0) {
-    stop("No weather stations found. Add stations first.", call. = FALSE)
-  }
+  if (nrow(stations) == 0) return(invisible(NULL))
 
   all_tables <- list_db_tables(con)
   n_updated <- 0
@@ -519,6 +544,23 @@ match_weather_stations <- function(project,
     }
   }
 
+  # Match WGN to weather stations (mirrors Python import_weather.match_wgn)
+  if ("weather_wgn_cli" %in% all_tables && "weather_sta_cli" %in% all_tables) {
+    wgn_stations <- query_db(con, "SELECT id, lat, lon FROM weather_wgn_cli")
+    if (nrow(wgn_stations) > 0) {
+      for (i in seq_len(nrow(stations))) {
+        closest_idx <- find_closest_station(wgn_stations, stations$lat[i],
+                                            stations$lon[i])
+        if (!is.na(closest_idx)) {
+          execute_db(con,
+            "UPDATE weather_sta_cli SET wgn_id = ? WHERE id = ?",
+            params = list(wgn_stations$id[closest_idx], stations$id[i]))
+          n_updated <- n_updated + 1
+        }
+      }
+    }
+  }
+
   message("Matched ", n_updated, " objects to nearest weather stations")
-  invisible(project)
+  invisible(NULL)
 }
