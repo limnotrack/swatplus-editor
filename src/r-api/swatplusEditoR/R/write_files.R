@@ -127,6 +127,11 @@ write_direct <- function(project, output_dir, swat_version = "60",
   v <- version
   sv <- swat_version
   
+  # Match weather stations to all _con tables now that populate_from_gis has
+  # created them.  Mirrors Python import_weather.match_stations() which runs
+  # after GIS import and weather station creation.
+  match_weather_stations_db(con)
+
   # Update codes_bsn gwflow flag (matches Python gwflow_writer.update_codes_bsn())
   update_gwflow_codes_bsn(con)
   
@@ -1379,13 +1384,34 @@ write_connect_file <- function(con, con_tbl, con_out_tbl, elem_name,
   # Check if con_out table exists
   has_con_out <- has_data(con, con_out_tbl)
   
+  # Check if wst_id column exists in the table
+  tbl_cols <- DBI::dbListFields(con, con_tbl)
+  has_wst_id <- "wst_id" %in% tbl_cols
+  
+  if (has_wst_id) {
+    sql <- paste0(
+      "SELECT c.id, c.name, c.gis_id, c.area, c.lat, c.lon, c.elev, ",
+      "COALESCE(w.name, 'null') as wst ",
+      "FROM ", con_tbl, " c ",
+      "LEFT JOIN weather_sta_cli w ON c.wst_id = w.id ",
+      "ORDER BY c.id")
+  } else {
+    # No wst_id column - get nearest weather station or use first available
+    default_wst <- tryCatch(
+      DBI::dbGetQuery(con, "SELECT name FROM weather_sta_cli LIMIT 1")$name,
+      error = function(e) "null")
+    sql <- paste0(
+      "SELECT *, '", default_wst, "' as wst FROM ", con_tbl, " ORDER BY id")
+  }
+  
   # Get connection data with weather station name
-  sql <- paste0(
-    "SELECT c.id, c.name, c.gis_id, c.area, c.lat, c.lon, c.elev, ",
-    "COALESCE(w.name, 'null') as wst ",
-    "FROM ", con_tbl, " c ",
-    "LEFT JOIN weather_sta_cli w ON c.wst_id = w.id ",
-    "ORDER BY c.id")
+  # sql <- paste0(
+  #   "SELECT c.id, c.name, c.gis_id, c.area, c.lat, c.lon, c.elev, ",
+  #   "COALESCE(w.name, 'null') as wst ",
+  #   "FROM ", con_tbl, " c ",
+  #   "LEFT JOIN weather_sta_cli w ON c.wst_id = w.id ",
+  #   "ORDER BY c.id")
+  # weather_sta_cli <- DBI::dbReadTable(con, "weather_sta_cli")
   cons <- tryCatch(query_db(con, sql), error = function(e) {
     # Fallback without weather join
     tryCatch(query_db(con, paste0("SELECT * FROM ", con_tbl, " ORDER BY id")),
@@ -1446,7 +1472,7 @@ write_connect_file <- function(con, con_tbl, con_out_tbl, elem_name,
       tryCatch(
         query_db(con, paste0("SELECT * FROM ", con_out_tbl,
                              " WHERE ", gsub("_out$", "_id", con_out_tbl),
-                             " = ? ORDER BY id"),
+                             " = ? ORDER BY order_id"),
                  params = list(c_row$id)),
         error = function(e) data.frame())
     } else data.frame()
@@ -1952,7 +1978,16 @@ gwflow_exists <- function(con) {
 #' @keywords internal
 update_gwflow_codes_bsn <- function(con) {
   if (!has_data(con, "codes_bsn")) return(invisible(NULL))
-  
+
+  # Ensure gwflow column exists (older databases may lack it; mirrors Python
+  # update_project.py migrator.add_column('codes_bsn', 'gwflow', ...))
+  cols <- DBI::dbListFields(con, "codes_bsn")
+  if (!"gwflow" %in% cols) {
+    tryCatch(
+      execute_db(con, "ALTER TABLE codes_bsn ADD COLUMN gwflow INTEGER DEFAULT 0"),
+      error = function(e) invisible(NULL))
+  }
+
   gw_flag <- if (gwflow_exists(con)) 1L else 0L
   tryCatch(
     execute_db(con, "UPDATE codes_bsn SET gwflow = ?", params = list(gw_flag)),

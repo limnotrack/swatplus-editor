@@ -6,7 +6,8 @@
 \usage{
 match_weather_stations(
   project,
-  tables = c("hru_con", "aquifer_con", "chandeg_con", "rout_unit_con", "reservoir_con")
+  tables = c("aquifer_con", "channel_con", "chandeg_con", "rout_unit_con",
+    "reservoir_con", "recall_con", "exco_con", "hru_con", "hru_lte_con")
 )
 }
 \arguments{
@@ -21,5 +22,9 @@ The project object (invisibly).
 \description{
 Updates the \code{wst_id} foreign key on connection tables (e.g.,
 \code{hru_con}, \code{aquifer_con}) to reference the closest weather
-station by lat/lon coordinates.
+station by lat/lon coordinates. Also matches \code{wgn_id} on
+\code{weather_sta_cli} to the nearest weather generator station.
+}
+\details{
+Called automatically by \code{\link{add_weather_stations}}.
 }
