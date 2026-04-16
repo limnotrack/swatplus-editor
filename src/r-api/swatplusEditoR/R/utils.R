@@ -116,11 +116,74 @@ read_swat <- function(file, out_dir, skip = 1, ...) {
     message("  [MISSING] ", file)
     return(NULL)
   }
-  tryCatch(
-    read.table(path, skip = skip, header = TRUE, fill = TRUE, ...),
-    error = function(e) {
-      message("  [READ ERROR] ", file, ": ", e$message)
-      NULL
+  tryCatch({
+    lines <- readLines(path)
+    
+    # Skip metadata line(s)
+    lines <- lines[(skip + 1):length(lines)]
+    if (length(lines) < 2) return(NULL)
+    
+    # Parse header (first remaining line)
+    header <- scan(text = lines[1], what = character(), quiet = TRUE)
+    data_lines <- lines[-1]
+    
+    # Remove empty lines
+    data_lines <- data_lines[nzchar(trimws(data_lines))]
+    if (length(data_lines) == 0) return(NULL)
+    
+    # Count max fields across all data lines
+    n_base <- length(header)
+    field_counts <- sapply(data_lines, function(x) {
+      length(scan(text = x, what = character(), quiet = TRUE))
+    })
+    n_max <- max(field_counts)
+    
+    # If all rows fit the header, use standard read
+    if (n_max <= n_base) {
+      return(read.table(path, skip = skip, header = TRUE, fill = TRUE, ...))
     }
-  )
+    
+    # Extended columns: repeating outflow groups (obj_typ, obj_id, hyd_typ, frac)
+    n_extra <- n_max - n_base
+    n_groups <- ceiling(n_extra / 4)
+    extra_names <- character(0)
+    for (g in seq_len(n_groups)) {
+      suffix <- paste0("_", g + 1)
+      extra_names <- c(extra_names,
+                       paste0("obj_typ", suffix),
+                       paste0("obj_id", suffix),
+                       paste0("hyd_typ", suffix),
+                       paste0("frac", suffix))
+    }
+    all_names <- c(header, extra_names[seq_len(n_extra)])
+    
+    # Parse each line, padding short rows with NA
+    parsed <- lapply(data_lines, function(x) {
+      vals <- scan(text = x, what = character(), quiet = TRUE)
+      length(vals) <- n_max  # pads with NA
+      vals
+    })
+    
+    df <- as.data.frame(do.call(rbind, parsed), stringsAsFactors = FALSE)
+    names(df) <- all_names
+    
+    # Convert numeric columns
+    for (col in names(df)) {
+      vals <- df[[col]]
+      # Try numeric conversion on non-NA values
+      non_na <- vals[!is.na(vals)]
+      if (length(non_na) > 0) {
+        numeric_vals <- suppressWarnings(as.numeric(non_na))
+        if (!any(is.na(numeric_vals))) {
+          df[[col]] <- as.numeric(df[[col]])
+        }
+      }
+    }
+    
+    df
+  },
+  error = function(e) {
+    message("  [READ ERROR] ", file, ": ", e$message)
+    NULL
+  })
 }
