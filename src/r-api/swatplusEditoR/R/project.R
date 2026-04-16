@@ -1614,6 +1614,62 @@ populate_from_gis <- function(con) {
       DBI::dbGetQuery(con, "SELECT id FROM initial_cha LIMIT 1")$id[1L],
       error = function(e) 1L)
     
+    # One default nutrients_cha row with physics-based defaults (mirrors Python Nutrients_cha model).
+    # If the table exists with the wrong schema (e.g. initial-concentration columns such as
+    # 'algae', 'cbod', 'dis_ox' instead of process-parameter columns like 'alg_stl'), drop it
+    # so that .gis_write_safe() recreates it with the correct column set.
+    if (.gis_count(con, "nutrients_cha") == 0L) {
+      nut_cols <- tryCatch(DBI::dbListFields(con, "nutrients_cha"),
+                           error = function(e) character(0))
+      if (length(nut_cols) > 0L && !"alg_stl" %in% nut_cols) {
+        .gis_exec(con, "DROP TABLE IF EXISTS nutrients_cha")
+      }
+      nuts_def <- data.frame(
+        id          = 1L,
+        name        = "nutcha1",
+        plt_n       = 0,
+        ptl_p       = 0,
+        alg_stl     = 1,
+        ben_disp    = 0.05,
+        ben_nh3n    = 0.5,
+        ptln_stl    = 0.05,
+        ptlp_stl    = 0.05,
+        cst_stl     = 2.5,
+        ben_cst     = 2.5,
+        cbn_bod_co  = 1.71,
+        air_rt      = 50,
+        cbn_bod_stl = 0.36,
+        ben_bod     = 2,
+        bact_die    = 2,
+        cst_decay   = 1.71,
+        nh3n_no2n   = 0.55,
+        no2n_no3n   = 1.1,
+        ptln_nh3n   = 0.21,
+        ptlp_solp   = 0.35,
+        q2e_lt      = 2L,
+        q2e_alg     = 2L,
+        chla_alg    = 50,
+        alg_n       = 0.08,
+        alg_p       = 0.015,
+        alg_o2_prod = 1.6,
+        alg_o2_resp = 2,
+        o2_nh3n     = 3.5,
+        o2_no2n     = 1.07,
+        alg_grow    = 2,
+        alg_resp    = 2.5,
+        slr_act     = 0.3,
+        lt_co       = 0.75,
+        const_n     = 0.02,
+        const_p     = 0.025,
+        lt_nonalg   = 1,
+        alg_shd_l   = 0.03,
+        alg_shd_nl  = 0.054,
+        nh3_pref    = 0.5,
+        description = "",
+        stringsAsFactors = FALSE)
+      .gis_write_safe(con, "nutrients_cha", nuts_def)
+    }
+    
     # If the existing hyd_sed_lte_cha table has the old 'wd_rto' column (present
     # in projects created before the wd_rto -> sinu migration), drop it so that
     # it is recreated with the current schema matching Python Hyd_sed_lte_cha.
@@ -2437,11 +2493,11 @@ populate_from_gis <- function(con) {
       nm <- .gis_name("aqu", row$id, cnt)
       aqu_rows[[i]] <- data.frame(
         id        = i, name = nm, init_id   = init_id,
-        gw_flo    = 0.05,  dep_bot   = 10.0,   dep_wt    = 2000.0,
-        no3_n     = 0.0,   sol_p     = 0.0,    ptl_n     = 0.0,
-        ptl_p     = 0.0,   bf_max    = 1.0,    alpha_bf  = 0.048,
+        gw_flo    = 0.05,  dep_bot   = 10.0,   dep_wt    = 3.0,
+        no3_n     = 0.0,   sol_p     = 0.0,    carbon    = 0.5,
+        flo_dist  = 50.0,  bf_max    = 1.0,    alpha_bf  = 0.05,
         revap     = 0.02,  rchg_dp   = 0.05,   spec_yld  = 0.05,
-        hl_no3n   = 0.0,   flo_min   = 0.0,    revap_min = 0.0,
+        hl_no3n   = 30.0,  flo_min   = 3.0,    revap_min = 5.0,
         stringsAsFactors = FALSE)
       con_rows[[i]] <- data.frame(
         id = i, name = nm, gis_id = row$id,
@@ -2460,10 +2516,10 @@ populate_from_gis <- function(con) {
       nm <- .gis_name("aqu_deep", row$id, cnt_d)
       aqu_rows[[i]] <- data.frame(
         id = i, name = nm, init_id = init_id,
-        gw_flo = 0.05, dep_bot = 10.0, dep_wt = 2000.0,
-        no3_n = 0.0, sol_p = 0.0, ptl_n = 0.0, ptl_p = 0.0,
-        bf_max = 1.0, alpha_bf = 0.048, revap = 0.02,
-        rchg_dp = 0.05, spec_yld = 0.05, hl_no3n = 0.0,
+        gw_flo = 0.0, dep_bot = 100.0, dep_wt = 20.0,
+        no3_n = 0.0, sol_p = 0.0, carbon = 0.5, flo_dist = 50.0,
+        bf_max = 1.0, alpha_bf = 0.01, revap = 0.0,
+        rchg_dp = 0.0, spec_yld = 0.03, hl_no3n = 30.0,
         flo_min = 0.0, revap_min = 0.0,
         stringsAsFactors = FALSE)
       con_rows[[i]] <- data.frame(
@@ -2640,8 +2696,44 @@ populate_from_gis <- function(con) {
     }
 
     if (.gis_count(con, "rout_unit_con_out") == 0L) {
-      df <- .build_con_out(c("lsu","sub"), "rout_unit_con_id", rtu_map)
-      if (!is.null(df)) .gis_write(con, "rout_unit_con_out", df)
+      # Build subbasin -> channel gis_id lookup
+      gis_cha <- tryCatch(
+        DBI::dbGetQuery(con, "SELECT id AS cha_gis_id, subbasin FROM gis_channels"),
+        error = function(e) data.frame(cha_gis_id = integer(0), subbasin = integer(0)))
+      sub_to_cha <- if (nrow(gis_cha) > 0L)
+        setNames(gis_cha$cha_gis_id, as.character(gis_cha$subbasin))
+      else c()
+      
+      # Each RTU routes to the channel in its own subbasin
+      rtu_rows <- route_src[tolower(route_src$sourcecat) %in% c("lsu", "sub"), , drop = FALSE]
+      if (nrow(rtu_rows) > 0L && nrow(rtu_map) > 0L) {
+        result <- list()
+        for (k in seq_len(nrow(rtu_rows))) {
+          r <- rtu_rows[k, ]
+          src_id <- rtu_map$id[match(r$sourceid, rtu_map$gis_id)]
+          if (is.na(src_id)) next
+          
+          # Route to the channel in this subbasin
+          cha_gis_id <- sub_to_cha[as.character(r$sourceid)]
+          if (is.na(cha_gis_id)) next
+          cha_con_id <- cha_map$id[match(cha_gis_id, cha_map$gis_id)]
+          if (is.na(cha_con_id)) next
+          
+          hyd <- if (!is.null(r$hyd_typ) && !is.na(r$hyd_typ) && nzchar(r$hyd_typ))
+            r$hyd_typ else "tot"
+          
+          result[[length(result) + 1L]] <- data.frame(
+            rout_unit_con_id = src_id,
+            order_id = 1L,
+            obj_typ = "sdc",
+            obj_id = cha_con_id,
+            hyd_typ = hyd,
+            frac = 1.0,
+            stringsAsFactors = FALSE)
+        }
+        if (length(result) > 0L)
+          .gis_write(con, "rout_unit_con_out", do.call(rbind, result))
+      }
     }
 
     if (.gis_count(con, "chandeg_con_out") == 0L) {
