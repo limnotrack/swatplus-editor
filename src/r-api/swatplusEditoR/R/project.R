@@ -2553,7 +2553,21 @@ populate_from_gis <- function(con) {
   }
   rtu_map <- .make_map("rout_unit_con")
   cha_map <- .make_map("chandeg_con")
-  aqu_map <- .make_map("aquifer_con")
+  # Split aquifer_con into shallow (aqu) and deep (daq) maps to mirror Python's
+  # separate gis_to_aqu_ids / gis_to_deep_aqu_ids dictionaries.
+  # Both share the same aquifer_con table but use different gis_id spaces.
+  aqu_all_named <- tryCatch(
+    DBI::dbGetQuery(con, "SELECT id, gis_id, name FROM aquifer_con ORDER BY id"),
+    error = function(e) data.frame(id = integer(0), gis_id = integer(0),
+                                   name = character(0)))
+  if (nrow(aqu_all_named) > 0L) {
+    deep_mask <- grepl("^aqu_deep", aqu_all_named$name, ignore.case = TRUE)
+    aqu_map <- aqu_all_named[!deep_mask, c("id", "gis_id"), drop = FALSE]
+    daq_map <- aqu_all_named[ deep_mask, c("id", "gis_id"), drop = FALSE]
+  } else {
+    aqu_map <- data.frame(id = integer(0), gis_id = integer(0))
+    daq_map <- data.frame(id = integer(0), gis_id = integer(0))
+  }
   res_map <- .make_map("reservoir_con")
   hru_map <- .make_map("hru_con")
   rec_map <- .make_map("recall_con")
@@ -2566,13 +2580,13 @@ populate_from_gis <- function(con) {
     cat_to_map <- list(
       lsu = rtu_map, sub = rtu_map,
       ch  = cha_map, sdc = cha_map,
-      aqu = aqu_map,
+      aqu = aqu_map, daq = daq_map,
       wtr = res_map, res = res_map, pnd = res_map,
       hru = hru_map)
     cat_to_typ <- list(
       lsu = "ru",  sub = "ru",
       ch  = "sdc", sdc = "sdc",
-      aqu = "aqu",
+      aqu = "aqu", daq = "aqu",
       wtr = "res", res = "res", pnd = "res",
       hru = "hru")
 
@@ -2605,7 +2619,7 @@ populate_from_gis <- function(con) {
 
     # All rows with non-zero percent, excluding explicit outlets.
     # RouteCat.OUTLET = "X" in Python; PT-sink rows are kept for chain following.
-    supported <- c("lsu","sub","ch","sdc","aqu","wtr","res","pnd")
+    supported <- c("lsu","sub","ch","sdc","aqu","daq","wtr","res","pnd")
     route_src <- routing[routing$percent > 0 &
                          !tolower(routing$sinkcat) %in% "x", , drop = FALSE]
 
